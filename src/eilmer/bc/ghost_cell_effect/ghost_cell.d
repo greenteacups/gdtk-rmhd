@@ -63,6 +63,9 @@ void reflect_normal_magnetic_field(ref FlowState fs, in FVInterface IFace)
         fs.B.transform_to_local_frame(IFace.n, IFace.t1, IFace.t2);
         fs.B.x = (fs.B.x);
         fs.B.transform_to_global_frame(IFace.n, IFace.t1, IFace.t2);
+
+        f.fs.B.x = -(((0.1*892)*0.2^^3)/(2*((f.pos.x^^2+f.pos.y^^2)^^0.5)^^5)) * (2*(f.pos.x)^^2 - (f.pos.y)^^2);
+        f.fs.B.y = -(((0.1*892)*0.2^^3)/(2*((f.pos.x^^2+f.pos.y^^2)^^0.5)^^5)) * (3*(f.pos.x)*(f.pos.y));
         // Used for different boundary conditions in the divergence cleaning- not currently active
         /*if (GlobalConfig.divergence_cleaning) {
                 fs.psi = fs.psi + GlobalConfig.c_h * (fs.B.x - fs.B.x);
