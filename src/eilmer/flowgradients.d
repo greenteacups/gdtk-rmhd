@@ -67,6 +67,9 @@ public:
     version(turbulence) {
         number[3][] turb; // turbulence primitive variables
     }
+    version(MHD) {
+        number[3][3] B; // magnetic field derivatives
+    }
 private:
     LocalConfig myConfig;
 
@@ -103,6 +106,11 @@ public:
                 foreach (j; 0 .. 3) { turb[i][j] = to!number(0.0); }
             }
         }
+        version(MHD) {
+            foreach (i; 0 .. 3) {
+                foreach (j; 0 .. 3) { B[i][j] = to!number(0.0); }
+            }
+        }
     }
 
     this(in FlowGradients other)
@@ -121,6 +129,9 @@ public:
             turb.length = other.turb.length;
             foreach(i; 0 .. turb.length) turb[i][] = other.turb[i][];
         }
+        version(MHD){
+            foreach(i; 0 .. 3) B[i][] = other.B[i][];
+        }
     }
 
     @nogc
@@ -137,6 +148,9 @@ public:
         version(turbulence) {
             foreach(i; 0 .. turb.length) turb[i][] = other.turb[i][];
         }
+        version(MHD) {
+            foreach (i; 0 .. 3) { B[i][] = other.B[i][]; }
+        }
     }
 
     @nogc
@@ -152,6 +166,9 @@ public:
         }
         version(turbulence) {
             foreach(i; 0 .. turb.length) turb[i][] += other.turb[i][];
+        }
+        version(MHD) {
+            foreach (i; 0 .. 3) { B[i][] += other.B[i][]; }
         }
     }
 
@@ -177,6 +194,11 @@ public:
                 foreach (j; 0 .. 3) turb[i][j] += other.turb[i][j] * factor;
             }
         }
+        version(MHD) {
+            foreach (i; 0 .. 3) {
+                foreach (j; 0 .. 3) B[i][j] += other.B[i][j] * factor;
+            }
+        }
     }
 
     @nogc
@@ -192,6 +214,9 @@ public:
         }
         version(turbulence) {
             foreach(i; 0 .. turb.length) turb[i][] *= factor;
+        }
+        version(MHD) {
+            foreach (i; 0 .. 3) { B[i][] *= factor; }
         }
     }
 
@@ -223,6 +248,13 @@ public:
             if (myConfig.turb_model.nturb>0) repr ~= to!string(turb[0]);
             foreach (i; 1 .. myConfig.turb_model.nturb) repr ~= ", " ~ to!string(turb[i]);
             repr ~= "]";
+        }
+        version(MHD) {
+            foreach (i; 0 .. B.length) {
+                repr ~= "[" ~ to!string(B[i][0]);
+                foreach (j; 1 .. B[i].length) repr ~= ", " ~ to!string(B[i][j]);
+                repr ~= "],";
+            }
         }
         repr ~= ")";
         return to!string(repr);
@@ -332,6 +364,21 @@ public:
                 turb[tidx][2] = 0.0;
             }
             //
+        version(MHD) {
+            mixin(codeForGradients("B.x"));
+            B[0][0] = gradient_x * area_inv;
+            B[0][1] = -gradient_y * area_inv;
+            B[0][2] = 0.0;
+            //
+            mixin(codeForGradients("B.y"));
+            B[1][0] = gradient_x * area_inv;
+            B[1][1] = -gradient_y * area_inv;
+            B[1][2] = 0.0;
+            //
+            B[2][0] = 0.0;
+            B[2][1] = 0.0;
+            B[2][2] = 0.0;
+        }
         }
     } // end gradients_xy_div()
 
@@ -555,6 +602,17 @@ public:
         version(turbulence) {
             foreach(tidx; 0 .. myConfig.turb_model.nturb){
                 mixin(codeForGradients("turb[tidx]", "turb[tidx]"));
+            }
+        }
+        version(MHD) {
+            mixin(codeForGradients("B.x", "B[0]"));
+            mixin(codeForGradients("B.y", "B[1]"));
+            //printf("test = %f\n", cloud_fs[0].vel.x);
+            if (dimensions == 3) {
+                mixin(codeForGradients("B.z", "B[2]"));
+            } else {
+                // 2D z-field
+                B[2][0] = 0.0; B[2][1] = 0.0; B[2][2] = 0.0;
             }
         }
     } // end gradients_leastsq()
