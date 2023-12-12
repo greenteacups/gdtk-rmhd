@@ -964,11 +964,17 @@ public:
         if(sigma < 10.0) {sigma = 10.0;}
         if(sigma > 1.0e4) {sigma = 1.0e4;}
 
-        //sigma = 4000; // For testinc constant conductivities
+        //For testing constant conductivities
+        number mu0 = 4 * std.math.PI * 1e-7;    // Permeability of free space
+
+        number L = 0.4; // Characterisitc length scale
+        number Rem = 1.0;
+        number u0 = sqrt(fs.vel.x^^2 + fs.vel.y^^2);
+        sigma = Rem/(mu0*u0*L);
+        if(sigma < 1.0) {sigma = 1.0;}
 
         // Calculate Diffusive Flux Terms:
-        number mu0 = 4 * std.math.PI * 1e-7;    // Permeability of free space
-        number eta = 0.001; //1/(mu0*sigma);     // Diffusivity
+        number eta = 1/(mu0*sigma);     // Diffusivity
 
         number dBxdx = grad.B[0][0] ;
         number dBxdy = grad.B[0][1] ;
@@ -976,7 +982,7 @@ public:
         number dBydy = grad.B[1][1] ;
 
         // Brin Test Case Boundary Condition - Ideal conducting walls
-        if(pos.y > 6.35 || pos.y < -6.35) {dBxdy = 0.0; fs.B.y = 0.0;}
+        //if(pos.y > 6.35 || pos.y < -6.35) {dBxdy = 0.0; fs.B.y = 0.0;}
 
         // Calculate diffusion terms
         number Bxdiffusion = eta * (dBxdy - dBydx) *n.y;
