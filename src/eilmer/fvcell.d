@@ -1291,6 +1291,67 @@ public:
     }
 
     @nogc
+    void add_MHD_Lorentz_force()
+    // 2D Lorentz Force Computation
+    // Added based on Alexis Lefevre's MHD UDF
+    // Assumes zero resistivity such that magnetic field is static (myConfig.MHD_static_field)
+    {
+        // Electron number density: n_e
+        auto gmodel = myConfig.gmodel;
+        number massf_e_minus = 0.0;
+
+        int electron_index;
+        foreach(it; 0 .. myConfig.gmodel.n_species)
+        {
+            if (gmodel.species_name(it) == "e-") {
+                massf_e_minus = fs.gas.massf[it];
+            }
+        }
+
+        number rho = fs.gas.rho;
+        number T = fs.gas.T;
+        number Na = 6.02214076e23; // Avogradro's Number (1/mol)
+        number We = 5.485799e-7; // Electron molar mass (kg/mol)
+        number n_e = Na*massf_e_minus*rho/We;
+
+        // Electrical conductivity: sigma
+        number sigma = 0.0;
+        number K_to_eV = 11604.525;  //conversion between Kelvin and eV  --K eV-1
+        number Te = T / K_to_eV;
+        number lnA = 0;
+        number n_e_min = 1.0e19;
+
+        // electrical conductivity from Raizer for a strongly ionized plasma
+        if (n_e < n_e_min)
+        {
+            sigma = 0.0;
+        }
+        else
+        {
+            lnA = 13.57 + 1.5 * log10(Te) - 0.5 * log10((n_e+1.0)*1.0e-6);
+            sigma = (1.9e2 * (Te^^(1.5)) / lnA) * 100.0;  //Ohm-1 m-1
+        }
+        if (sigma > 1.0e5) // Handles extreme cases that may occur in low density/freestream flow
+        {
+            sigma = 0.0;
+        }
+
+        number ux = fs.vel.x;
+        number uy = fs.vel.y;
+        number Bx = fs.B.x;
+        number By = fs.B.y;
+
+        if (SimState.time > 1.3e-4){
+            auto cqi = myConfig.cqi;
+            number scale = 1.0;
+            if (SimState.time < 1.8e-4){scale = SimState.time / 1.8e-4;}
+
+            Q[cqi.xMom] += -sigma*By*(ux*By-uy*Bx) *scale;
+            Q[cqi.yMom] += sigma*Bx*(ux*By-uy*Bx) *scale;
+        }
+    }
+
+    @nogc
     number calculate_wall_Reynolds_number(int which_boundary, GasModel gmodel)
     // [TODO] unstructured-grid adaption to be done, however,
     // this function is not presently used because we have not ported the
