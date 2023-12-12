@@ -61,7 +61,7 @@ void reflect_normal_magnetic_field(ref FlowState fs, in FVInterface IFace)
 {
     version(MHD) {
         fs.B.transform_to_local_frame(IFace.n, IFace.t1, IFace.t2);
-        fs.B.x = -(fs.B.x);
+        fs.B.x = (fs.B.x);
         fs.B.transform_to_global_frame(IFace.n, IFace.t1, IFace.t2);
         // Used for different boundary conditions in the divergence cleaning- not currently active
         /*if (GlobalConfig.divergence_cleaning) {
