@@ -30,6 +30,7 @@ import conservedquantities;
 import globalconfig;
 import lsqinterp;
 import mass_diffusion;
+import globaldata : SimState;
 
 enum IndexDirection {i=0, j, k, none=666}; // Needed for StructuredGrid interpolation.
 
