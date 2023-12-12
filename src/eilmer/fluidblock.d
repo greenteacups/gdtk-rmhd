@@ -799,6 +799,13 @@ public:
     }
 
     @nogc
+    void magnetic_field_flux(FVInterface[] face_list = [])
+    {
+        if (face_list.length == 0) { face_list = faces; }
+        foreach (iface; face_list) { iface.resistive_MHD_flux_calc(); }
+    }
+
+    @nogc
     void init_residuals()
     // Initialization of data for later computing residuals.
     {
