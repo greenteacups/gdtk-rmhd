@@ -822,4 +822,135 @@ public:
         }
     } // end viscous_flux_calc()
 
+@nogc
+    void resistive_MHD_flux_calc()
+    // Diffusive flux terms from "An adaptive mesh semi-implicit-conservative unsplit method
+    // for resistive MHD" by R. Samtaney (2005)
+    //
+    // Implemented by Sebastiaan van Oeveren - 11/08/23
+    {
+        // Conductivity:
+        // Calculate electron number density (n_e) and electron mole fraction (M_e)
+        auto gmodel = myConfig.gmodel;
+        number massf_O = 0.0;
+        number massf_O2 = 0.0;
+        number massf_N2 = 0.0;
+        number massf_N = 0.0;
+        number massf_NO = 0.0;
+        number massf_NOp = 0.0;
+        number massf_Np = 0.0;
+        number massf_Op = 0.0;
+        number massf_N2p = 0.0;
+        number massf_O2p = 0.0;
+        number massf_e_minus = 0.0;
+
+        int electron_index;
+        foreach(it; 0 .. myConfig.gmodel.n_species)
+        {
+            if (gmodel.species_name(it) == "O") { massf_O = fs.gas.massf[it];}
+            if (gmodel.species_name(it) == "O2") { massf_O2 = fs.gas.massf[it];}
+            if (gmodel.species_name(it) == "N2") { massf_N2 = fs.gas.massf[it];}
+            if (gmodel.species_name(it) == "N") { massf_N = fs.gas.massf[it];}
+            if (gmodel.species_name(it) == "NO") { massf_NO = fs.gas.massf[it];}
+            if (gmodel.species_name(it) == "NO+") { massf_NOp = fs.gas.massf[it];}
+            if (gmodel.species_name(it) == "N+") { massf_Np = fs.gas.massf[it];}
+            if (gmodel.species_name(it) == "O+") { massf_Op = fs.gas.massf[it];}
+            if (gmodel.species_name(it) == "N2+") { massf_N2p = fs.gas.massf[it];}
+            if (gmodel.species_name(it) == "O2+") { massf_O2p = fs.gas.massf[it];}
+            if (gmodel.species_name(it) == "e-") { massf_e_minus = fs.gas.massf[it];}
+        }
+
+        number mmasse = 5.485799e-4;
+        number mmassO = 15.999;
+        number mmassO2 = 31.999;
+        number mmassN2 = 28.0134;
+        number mmassN = 14.0067;
+        number mmassNO = 30.01;
+        number mmassNOp = 30.01 + mmasse;
+        number mmassNp = 14.0067 + mmasse;
+        number mmassOp = 15.999 + mmasse;
+        number mmassN2p = 28.0134 + mmasse;
+        number mmassO2p = 31.999 + mmasse;
+
+        number mole_O = massf_O/mmassO;
+        number mole_O2 = massf_O2/mmassO2;
+        number mole_N2 = massf_N2/mmassN2;
+        number mole_N = massf_N/mmassN;
+        number mole_NO = massf_NO/mmassNO;
+        number mole_NOp = massf_NOp/mmassNOp;
+        number mole_Np = massf_Np/mmassNp;
+        number mole_Op = massf_Op/mmassOp;
+        number mole_N2p = massf_N2p/mmassN2p;
+        number mole_O2p = massf_O2p/mmassO2p;
+        number mole_e = massf_e_minus/mmasse;
+
+        number mole_sum = mole_O + mole_O2 + mole_N2 + mole_N + mole_NO + mole_NOp + mole_Np + mole_Op + mole_N2p + mole_O2p + mole_e;
+        number molef_e = mole_e / mole_sum;
+
+        number rho = fs.gas.rho;
+        number T = fs.gas.T;
+        number P = fs.gas.p;
+        number Na = 6.02214076e23; // Avogradro's Number (1/mol)
+        number We = 5.485799e-7; // Electron molar mass (kg/mol)
+        number n_e = Na*massf_e_minus*rho/We;
+
+        // Electrical conductivity: sigma
+        number sigma = 1.0;
+        number K_to_eV = 11604.525;  //conversion between Kelvin and eV  --K eV-1
+        number Te = T / K_to_eV;
+
+        if (molef_e <= 1.0e-4) { // Weakly Ionised Condition
+            sigma = 2.82e-4 * (n_e * 1.0e-6) / (3.9 * 1.0e9 / (P / 133.322)) * 1.0e2;
+
+        } else if (molef_e >= 1.0e-3) { // Strongly Ionised Condition
+            // Calculate lnA based on Raizer's formula for strongly ionized plasma
+            number lnA = 13.57 + 1.5 * log10(Te) - 0.5 * log10((n_e + 1.0) * 1.0e-6);
+
+            // Calculate electrical conductivity using the formula from Raizer
+            sigma = (1.9e2 * pow(Te, 1.5) / lnA) * 100.0; // Conductivity in Ohm-1 m-1
+
+        } else { // Intermediate ionisation condition
+            number sigmaw = 2.82e-4 * (n_e * 1.0e-6) / (3.9 * 1.0e9 / (P / 133.322)) * 1.0e2;
+            number lnA = 13.57 + 1.5 * log10(Te) - 0.5 * log10((n_e + 1.0) * 1.0e-6);
+            number sigmas = (1.9e2 * pow(Te, 1.5) / lnA) * 100.0;
+
+            sigma = sigmaw + (molef_e - 1.0e-4) * (sigmas - sigmaw) / (1.0e-3 - 1.0e-4);
+        }
+
+        // Truncate extreme values - Need to verify when this is necessary
+        if(sigma < 10.0) {sigma = 10.0;}
+        if(sigma > 1.0e4) {sigma = 1.0e4;}
+
+        //sigma = 4000; // For testinc constant conductivities
+
+        // Calculate Diffusive Flux Terms:
+        number mu0 = 4 * std.math.PI * 1e-7;    // Permeability of free space
+        number eta = 0.001; //1/(mu0*sigma);     // Diffusivity
+
+        number dBxdx = grad.B[0][0] ;
+        number dBxdy = grad.B[0][1] ;
+        number dBydx = grad.B[1][0] ;
+        number dBydy = grad.B[1][1] ;
+
+        // Brin Test Case Boundary Condition - Ideal conducting walls
+        if(pos.y > 6.35 || pos.y < -6.35) {dBxdy = 0.0; fs.B.y = 0.0;}
+
+        // Calculate diffusion terms
+        number Bxdiffusion = eta * (dBxdy - dBydx) *n.y;
+        number Bydiffusion = eta * (dBydx - dBxdy) *n.x;
+        number ediffusion = (1/1)* eta * (fs.B.y*(dBydx - dBxdy)*n.x -  fs.B.x*(dBydx - dBxdy)*n.y);
+
+        auto cqi = myConfig.cqi;
+        if (SimState.time > 0.0e-4) { // Temporary time - for scaling and rmhd delay
+            F[cqi.xB] -= Bxdiffusion;
+            F[cqi.yB] -= Bydiffusion;
+            F[cqi.totEnergy] -= ediffusion;
+        }
+        else {
+            F[cqi.xB] = 0.0;
+            F[cqi.yB] = 0.0;
+        }
+    }
+
+
 } // end of class FV_Interface
