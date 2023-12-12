@@ -2095,6 +2095,7 @@ public:
         version(turbulence) { nitems += myConfig.turb_model.nturb*3; }
         nitems += nmodes*3;
         nitems += nspecies*3;
+        version(MHD) { nitems += 12; }
 
         version(complex_numbers) {
             nitems *= 2;
@@ -2243,6 +2244,18 @@ public:
                             buf[ii++] = c.grad.T_modes[j][2].re; version(complex_numbers) { buf[ii++] = c.grad.T_modes[j][2].im; }
                         }
                     }
+                    // MHD
+                    version(MHD) {
+                        buf[ii++] = c.grad.B[0][0].re; version(complex_numbers) { buf[ii++] = c.grad.B[0][0].im; }
+                        buf[ii++] = c.grad.B[0][1].re; version(complex_numbers) { buf[ii++] = c.grad.B[0][1].im; }
+                        buf[ii++] = c.grad.B[0][2].re; version(complex_numbers) { buf[ii++] = c.grad.B[0][2].im; }
+                        buf[ii++] = c.grad.B[1][0].re; version(complex_numbers) { buf[ii++] = c.grad.B[1][0].im; }
+                        buf[ii++] = c.grad.B[1][1].re; version(complex_numbers) { buf[ii++] = c.grad.B[1][1].im; }
+                        buf[ii++] = c.grad.B[1][2].re; version(complex_numbers) { buf[ii++] = c.grad.B[1][2].im; }
+                        buf[ii++] = c.grad.B[2][0].re; version(complex_numbers) { buf[ii++] = c.grad.B[2][0].im; }
+                        buf[ii++] = c.grad.B[2][1].re; version(complex_numbers) { buf[ii++] = c.grad.B[2][1].im; }
+                        buf[ii++] = c.grad.B[2][2].re; version(complex_numbers) { buf[ii++] = c.grad.B[2][2].im; }
+                    }
                 }
                 version(mpi_timeouts) {
                     MPI_Request send_request;
@@ -2327,6 +2340,18 @@ public:
                             c.grad.T_modes[j][1].re = buf[ii++]; version(complex_numbers) { c.grad.T_modes[j][1].im = buf[ii++]; }
                             c.grad.T_modes[j][2].re = buf[ii++]; version(complex_numbers) { c.grad.T_modes[j][2].im = buf[ii++]; }
                         }
+                    }
+                    // MHD
+                    version(MHD) {
+                        c.grad.B[0][0].re = buf[ii++]; version(complex_numbers) { c.grad.B[0][0].im = buf[ii++]; }
+                        c.grad.B[0][1].re = buf[ii++]; version(complex_numbers) { c.grad.B[0][1].im = buf[ii++]; }
+                        c.grad.B[0][2].re = buf[ii++]; version(complex_numbers) { c.grad.B[0][2].im = buf[ii++]; }
+                        c.grad.B[1][0].re = buf[ii++]; version(complex_numbers) { c.grad.B[1][0].im = buf[ii++]; }
+                        c.grad.B[1][1].re = buf[ii++]; version(complex_numbers) { c.grad.B[1][1].im = buf[ii++]; }
+                        c.grad.B[1][2].re = buf[ii++]; version(complex_numbers) { c.grad.B[1][2].im = buf[ii++]; }
+                        c.grad.B[2][0].re = buf[ii++]; version(complex_numbers) { c.grad.B[2][0].im = buf[ii++]; }
+                        c.grad.B[2][1].re = buf[ii++]; version(complex_numbers) { c.grad.B[2][1].im = buf[ii++]; }
+                        c.grad.B[2][2].re = buf[ii++]; version(complex_numbers) { c.grad.B[2][2].im = buf[ii++]; }
                     }
                 }
             } else {
