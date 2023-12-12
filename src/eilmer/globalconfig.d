@@ -282,6 +282,7 @@ enum FluxCalculator {
     adaptive_hlle_roe, // HLLE near shocks, Roe otherwise
     hlle, // MHD HLLE approximate Riemann solver
     hlle2, // Standard HLLE approximate Riemann solver
+    hlle3, // Copy of hlle for RMHD testing
     roe, // Roe approximate Riemann solver
     osher, // Osher approximate Riemann solver
     asf, // Alpha-split Flux, high-order central difference. See Fisher et al. "Discete Conservative Finite-Difference Formulations..." 2012.
@@ -307,6 +308,7 @@ string flux_calculator_name(FluxCalculator fcalc)
     case FluxCalculator.adaptive_hlle_roe: return "adaptive_hlle_roe";
     case FluxCalculator.hlle: return "hlle";
     case FluxCalculator.hlle2: return "hlle2";
+    case FluxCalculator.hlle3: return "hlle3";
     case FluxCalculator.roe: return "roe";
     case FluxCalculator.osher: return "osher";
     case FluxCalculator.asf: return "asf";
@@ -333,6 +335,7 @@ FluxCalculator flux_calculator_from_name(string name)
     case "adaptive_hlle_roe": return FluxCalculator.adaptive_hlle_roe;
     case "hlle": return FluxCalculator.hlle;
     case "hlle2": return FluxCalculator.hlle2;
+    case "hlle3": return FluxCalculator.hlle3;
     case "roe": return FluxCalculator.roe;
     case "osher": return FluxCalculator.osher;
     case "asf": return FluxCalculator.asf;
