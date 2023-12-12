@@ -103,6 +103,22 @@ public:
             reflect_normal_velocity(dest_cell.fs, f);
             if (blk.myConfig.MHD) {
                 reflect_normal_magnetic_field(dest_cell.fs, f);
+
+                auto fixed_face_Bx = -(((0.1)*0.2^^3)/(2*((f.pos.x^^2+f.pos.y^^2)^^0.5)^^5)) * (2*(f.pos.x)^^2 - (f.pos.y)^^2);
+                f.fs.B.x = 0.5*(0.5*fixed_face_Bx + 1.5*src_cell.fs.B.x);
+                auto fixed_face_By = -(((0.1)*0.2^^3)/(2*((f.pos.x^^2+f.pos.y^^2)^^0.5)^^5)) * (3*(f.pos.x)*(f.pos.y));
+                f.fs.B.y = 0.5*(0.5*fixed_face_By + 1.5*src_cell.fs.B.y);
+
+                auto fixed_cell_Bx = -(((0.1)*0.2^^3)/(2*((dest_cell.pos[0].x^^2+dest_cell.pos[0].y^^2)^^0.5)^^5)) * (2*(dest_cell.pos[0].x)^^2 - (dest_cell.pos[0].y)^^2);
+                dest_cell.fs.B.x = 0.5*(0.5*fixed_cell_Bx + 1.5*src_cell.fs.B.x); 
+                auto fixed_cell_By = -(((0.1)*0.2^^3)/(2*((dest_cell.pos[0].x^^2+dest_cell.pos[0].y^^2)^^0.5)^^5)) * (3*(dest_cell.pos[0].x)*(dest_cell.pos[0].y));
+                dest_cell.fs.B.y = 0.5*(0.5*fixed_cell_By + 1.5*src_cell.fs.B.y); 
+                
+                f.fs.B.x = -(((0.1)*0.2^^3)/(2*((f.pos.x^^2+f.pos.y^^2)^^0.5)^^5)) * (2*(f.pos.x)^^2 - (f.pos.y)^^2);
+                f.fs.B.y = -(((0.1)*0.2^^3)/(2*((f.pos.x^^2+f.pos.y^^2)^^0.5)^^5)) * (3*(f.pos.x)*(f.pos.y));
+                
+                dest_cell.fs.B.x = -(((0.1)*0.2^^3)/(2*((dest_cell.pos[0].x^^2+dest_cell.pos[0].y^^2)^^0.5)^^5)) * (2*(dest_cell.pos[0].x)^^2 - (dest_cell.pos[0].y)^^2);
+                dest_cell.fs.B.y = -(((0.1)*0.2^^3)/(2*((dest_cell.pos[0].x^^2+dest_cell.pos[0].y^^2)^^0.5)^^5)) * (3*(dest_cell.pos[0].x)*(dest_cell.pos[0].y));
             }
         }
     } // end apply_for_interface_structured_grid()
@@ -128,6 +144,22 @@ public:
                 reflect_normal_velocity(dest_cell.fs, f);
                 if (blk.myConfig.MHD) {
                     reflect_normal_magnetic_field(dest_cell.fs, f);
+
+                    auto fixed_face_Bx = -(((0.1)*0.2^^3)/(2*((f.pos.x^^2+f.pos.y^^2)^^0.5)^^5)) * (2*(f.pos.x)^^2 - (f.pos.y)^^2);
+                    f.fs.B.x = 0.5*(0.5*fixed_face_Bx + 1.5*src_cell.fs.B.x);
+                    auto fixed_face_By = -(((0.1)*0.2^^3)/(2*((f.pos.x^^2+f.pos.y^^2)^^0.5)^^5)) * (3*(f.pos.x)*(f.pos.y));
+                    f.fs.B.y = 0.5*(0.5*fixed_face_By + 1.5*src_cell.fs.B.y);
+
+                    auto fixed_cell_Bx = -(((0.1)*0.2^^3)/(2*((dest_cell.pos[0].x^^2+dest_cell.pos[0].y^^2)^^0.5)^^5)) * (2*(dest_cell.pos[0].x)^^2 - (dest_cell.pos[0].y)^^2);
+                    dest_cell.fs.B.x = 0.5*(0.5*fixed_cell_Bx + 1.5*src_cell.fs.B.x); 
+                    auto fixed_cell_By = -(((0.1)*0.2^^3)/(2*((dest_cell.pos[0].x^^2+dest_cell.pos[0].y^^2)^^0.5)^^5)) * (3*(dest_cell.pos[0].x)*(dest_cell.pos[0].y));
+                    dest_cell.fs.B.y = 0.5*(0.5*fixed_cell_By + 1.5*src_cell.fs.B.y); 
+                    
+                    f.fs.B.x = -(((0.1)*0.2^^3)/(2*((f.pos.x^^2+f.pos.y^^2)^^0.5)^^5)) * (2*(f.pos.x)^^2 - (f.pos.y)^^2);
+                    f.fs.B.y = -(((0.1)*0.2^^3)/(2*((f.pos.x^^2+f.pos.y^^2)^^0.5)^^5)) * (3*(f.pos.x)*(f.pos.y));
+                    
+                    dest_cell.fs.B.x = -(((0.1)*0.2^^3)/(2*((dest_cell.pos[0].x^^2+dest_cell.pos[0].y^^2)^^0.5)^^5)) * (2*(dest_cell.pos[0].x)^^2 - (dest_cell.pos[0].y)^^2);
+                    dest_cell.fs.B.y = -(((0.1)*0.2^^3)/(2*((dest_cell.pos[0].x^^2+dest_cell.pos[0].y^^2)^^0.5)^^5)) * (3*(dest_cell.pos[0].x)*(dest_cell.pos[0].y));
                 }
             }
         }
