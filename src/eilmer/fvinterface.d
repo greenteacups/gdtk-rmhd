@@ -462,6 +462,21 @@ public:
                     grad.turb[i][2] = c.grad.turb[i][2];
                 }
             }
+            // MHD
+            version(MHD) {
+                // vel-B
+                grad.B[0][0] = c.grad.B[0][0];
+                grad.B[0][1] = c.grad.B[0][1];
+                grad.B[0][2] = c.grad.B[0][2];
+                // vel-B
+                grad.B[1][0] = c.grad.B[1][0];
+                grad.B[1][1] = c.grad.B[1][1];
+                grad.B[1][2] = c.grad.B[1][2];
+                // vel-B
+                grad.B[2][0] = c.grad.B[2][0];
+                grad.B[2][1] = c.grad.B[2][1];
+                grad.B[2][2] = c.grad.B[2][2];
+            }
         } else {
             // With two attached cells, we are at a face that is internal to the domain
             // and so we can proceed to compute the average of the gradient values.
@@ -558,6 +573,33 @@ public:
                     grad.turb[i][1] = 0.5*(cL0.grad.turb[i][1]+cR0.grad.turb[i][1]) - jump*(ny/ndotehat);
                     grad.turb[i][2] = 0.5*(cL0.grad.turb[i][2]+cR0.grad.turb[i][2]) - jump*(nz/ndotehat);
                 }
+            }
+            // MHD
+            version(MHD) {
+                // B-x
+                avgdotehat = 0.5*(cL0.grad.B[0][0]+cR0.grad.B[0][0])*ehatx +
+                    0.5*(cL0.grad.B[0][1]+cR0.grad.B[0][1])*ehaty +
+                    0.5*(cL0.grad.B[0][2]+cR0.grad.B[0][2])*ehatz;
+                jump = avgdotehat - (cR0.fs.B.x - cL0.fs.B.x)/emag;
+                grad.B[0][0] = 0.5*(cL0.grad.B[0][0]+cR0.grad.B[0][0]) - jump*(nx/ndotehat);
+                grad.B[0][1] = 0.5*(cL0.grad.B[0][1]+cR0.grad.B[0][1]) - jump*(ny/ndotehat);
+                grad.B[0][2] = 0.5*(cL0.grad.B[0][2]+cR0.grad.B[0][2]) - jump*(nz/ndotehat);
+                // B-y
+                avgdotehat = 0.5*(cL0.grad.B[1][0]+cR0.grad.B[1][0])*ehatx +
+                    0.5*(cL0.grad.B[1][1]+cR0.grad.B[1][1])*ehaty +
+                    0.5*(cL0.grad.B[1][2]+cR0.grad.B[1][2])*ehatz;
+                jump = avgdotehat - (cR0.fs.B.y - cL0.fs.B.y)/emag;
+                grad.B[1][0] = 0.5*(cL0.grad.B[1][0]+cR0.grad.B[1][0]) - jump*(nx/ndotehat);
+                grad.B[1][1] = 0.5*(cL0.grad.B[1][1]+cR0.grad.B[1][1]) - jump*(ny/ndotehat);
+                grad.B[1][2] = 0.5*(cL0.grad.B[1][2]+cR0.grad.B[1][2]) - jump*(nz/ndotehat);
+                // B-z
+                avgdotehat = 0.5*(cL0.grad.B[2][0]+cR0.grad.B[2][0])*ehatx +
+                    0.5*(cL0.grad.B[2][1]+cR0.grad.B[2][1])*ehaty +
+                    0.5*(cL0.grad.B[2][2]+cR0.grad.B[2][2])*ehatz;
+                jump = avgdotehat - (cR0.fs.B.z - cL0.fs.B.z)/emag;
+                grad.B[2][0] = 0.5*(cL0.grad.B[2][0]+cR0.grad.B[2][0]) - jump*(nx/ndotehat);
+                grad.B[2][1] = 0.5*(cL0.grad.B[2][1]+cR0.grad.B[2][1]) - jump*(ny/ndotehat);
+                grad.B[2][2] = 0.5*(cL0.grad.B[2][2]+cR0.grad.B[2][2]) - jump*(nz/ndotehat);
             }
         }
     } // end average_cell_spatial_derivs()
