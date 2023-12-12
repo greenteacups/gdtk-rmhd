@@ -1980,6 +1980,9 @@ public:
         }
         if (myConfig.udf_source_terms) { c.add_udf_source_vector(); }
         c.time_derivatives(gtl, ftl);
+        if (GlobalConfig.MHD && GlobalConfig.MHD_resistive) {
+            magnetic_field_flux(c.iface);
+        }
     } // end evalRU()
 
 } // end class FluidBlock
