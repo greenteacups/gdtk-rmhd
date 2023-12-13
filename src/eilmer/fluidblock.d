@@ -1975,14 +1975,14 @@ public:
             }
             c.add_viscous_source_vector();
         } // end if viscous
+        if (GlobalConfig.MHD && GlobalConfig.MHD_resistive) {
+            magnetic_field_flux(c.iface);
+        }
         if (myConfig.reacting && myConfig.chemistry_update == ChemistryUpdateMode.integral) {
             c.add_thermochemical_source_vector(thermochem_source, reaction_fraction);
         }
         if (myConfig.udf_source_terms) { c.add_udf_source_vector(); }
         c.time_derivatives(gtl, ftl);
-        if (GlobalConfig.MHD && GlobalConfig.MHD_resistive) {
-            magnetic_field_flux(c.iface);
-        }
     } // end evalRU()
 
 } // end class FluidBlock
