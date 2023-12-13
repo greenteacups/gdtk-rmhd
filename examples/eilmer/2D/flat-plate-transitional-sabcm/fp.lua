@@ -80,10 +80,11 @@ SteadyStateSolver{
    frozen_preconditioner_count = 50,
    start_preconditioning = 0,
 
+
    use_scaling = true,
    use_complex_matvec_eval = true,
 
-   number_total_steps = 1500,
+   number_total_steps = 6000,
    stop_on_relative_global_residual = 1.0e-8,
 
    -- Settings for FGMRES iterative solver
