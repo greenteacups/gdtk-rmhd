@@ -179,25 +179,22 @@ void sts_gasdynamic_explicit_increment_with_fixed_grid()
         if (GlobalConfig.fixed_time_step) {
             // if we have a fixed time step then we need to specify the number of super-steps
             S = SimState.s_RKL;
-            if (S == 1) { euler_step = true; }
             dt_global = GlobalConfig.dt_init;
         } else {
             // We determine the allowable timestep here to overwrite the timestep calculated for the fluid domain
             // TODO: think about a more appropriate place to calculate the timestep. KAD 2022-11-08
             double cfl_value = GlobalConfig.cfl_schedule.interpolate_value(SimState.time);
+            double dt_local = double.max;
             dt_global = double.max;
             bool first = true;
-            foreach (i, sblk; parallel(localSolidBlocks, 1)) {
-                double dt_local = sblk.determine_time_step_size(cfl_value);
+            foreach (sblk; localSolidBlocks) {
+                dt_local = sblk.determine_time_step_size(cfl_value);
                 if (first) {
-                    local_dt_allow[i] = dt_local;
+                    dt_global = dt_local;
                     first = false;
                 } else {
-                    local_dt_allow[i] = fmin(local_dt_allow[i], dt_local);
+                    dt_global = fmin(dt_global, dt_local);
                 }
-            }
-            foreach (i,sblk; localSolidBlocks) {
-                dt_global = fmin(dt_global, local_dt_allow[i]);
             }
             version(mpi_parallel) {
                 MPI_Allreduce(MPI_IN_PLACE, &dt_global, 1, MPI_DOUBLE, MPI_MIN, MPI_COMM_WORLD);
