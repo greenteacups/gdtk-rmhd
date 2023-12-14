@@ -99,12 +99,12 @@ void integrate_solid_in_time_explicit(double target_time)
 
 void integrate_solid_in_time_implicit(double target_time, bool init_precondition_matrix)
 {
-    auto wallClockStart = Clock.currTime();
-    double wallClockElapsed;
-
-    // set some time integration parameters
-    local_dt_allow.length = localSolidBlocks.length; // prepare array for use later
-    bool dual_time_stepping = false;
+    // set some time parameters
+    int temporal_order = 1;
+    int startStep = 0;
+    int nSteps = 1_000_000;
+    bool dual_time_stepping = true;
+    double target_physical_time = dt_couple;
     double physicalSimTime = 0.0;
     int physical_step = 0;
     double target_physical_time, dt_physical;
@@ -129,13 +129,10 @@ void integrate_solid_in_time_implicit(double target_time, bool init_precondition
     }
     int startStep = 0;
     double residual = 0.0;
-    double normNew, normRef;
-    auto cfl = GlobalConfig.sdluOptions.cfl;
-    auto nSteps = GlobalConfig.sdluOptions.maxNewtonIterations;
-    auto eta = GlobalConfig.sdluOptions.GMRESSolveTolerance;
-    auto sigma = GlobalConfig.sdluOptions.perturbationSize;
-    auto tol = GlobalConfig.sdluOptions.NewtonSolveTolerance;
-    auto use_preconditioner = GlobalConfig.sdluOptions.usePreconditioner;
+
+    double eta = 0.1;
+    double sigma = 1.0e-50;
+    double tol = 1.0e1;
 
     // fill out all entries in the conserved quantity vector with the initial state
     foreach (sblk; parallel(localSolidBlocks,1)) {
@@ -178,8 +175,7 @@ void integrate_solid_in_time_implicit(double target_time, bool init_precondition
     normRef = sqrt(normRef);
 
     // start of main time-stepping loop
-    while (physicalSimTime < target_physical_time && physical_step < max_physical_steps) {
-
+    while (physicalSimTime <= target_physical_time) {
         if (GlobalConfig.is_master_task) {
             writeln("TIME: ", physicalSimTime, "    TIME-STEP: ", dt_physical);
         }
@@ -203,7 +199,10 @@ void integrate_solid_in_time_implicit(double target_time, bool init_precondition
             rpcGMRES_solve(step, physicalSimTime, dt, eta, sigma, dual_time_stepping, temporal_order, dt_physical, use_preconditioner);
             foreach (sblk; parallel(localSolidBlocks,1)) {
                 int ftl = to!int(sblk.myConfig.n_flow_time_levels-1);
+                int ftl = to!int(sblk.myConfig.n_flow_time_levels-1);
                 foreach (i, scell; sblk.cells) {
+                    scell.e[ftl] = scell.e[0] + sblk.de[i];
+                    scell.T = updateTemperature(scell.sp, scell.e[ftl]);
                     scell.e[ftl] = scell.e[0] + sblk.de[i];
                     scell.T = updateTemperature(scell.sp, scell.e[ftl]);
                 }
@@ -212,31 +211,11 @@ void integrate_solid_in_time_implicit(double target_time, bool init_precondition
             // Put new solid state into e[0] ready for next iteration.
             foreach (sblk; parallel(localSolidBlocks,1)) {
                 int ftl = to!int(sblk.myConfig.n_flow_time_levels-1);
+                int ftl = to!int(sblk.myConfig.n_flow_time_levels-1);
                 foreach (scell; sblk.cells) {
                     swap(scell.e[0],scell.e[ftl]);
                 }
             }
-
-            // check for convergence
-            evalRHS(physicalSimTime, 0);
-            foreach (sblk; parallel(localSolidBlocks,1)) {
-                foreach (i, scell; sblk.cells) {
-                    if (temporal_order == 0) {
-                        sblk.Fe[i] = scell.dedt[0].re;
-                    } else if (temporal_order == 1) {
-                        // add BDF1 unsteady term TODO: could we need to handle this better?
-                        sblk.Fe[i] = scell.dedt[0].re - (1.0/dt_physical)*scell.e[0].re + (1.0/dt_physical)*scell.e[1].re;
-                    } else { // temporal_order = 2
-                        // add BDF2 unsteady term TODO: could we need to handle this better?
-                        sblk.Fe[i] = scell.dedt[0].re - (1.5/dt_physical)*scell.e[0].re + (2.0/dt_physical)*scell.e[1].re - (0.5/dt_physical)*scell.e[2].re;
-                    }
-                }
-            }
-            mixin(dot_over_blocks("normNew", "Fe", "Fe"));
-            version(mpi_parallel) {
-                MPI_Allreduce(MPI_IN_PLACE, &normNew, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
-            }
-            normNew = sqrt(normNew);
 
             if (GlobalConfig.is_master_task) {
                 writeln("RELATIVE RESIDUAL: ", normNew/normRef);
@@ -246,9 +225,7 @@ void integrate_solid_in_time_implicit(double target_time, bool init_precondition
         }
 
         startStep = SimState.step+1;
-
-        // after a BDF1 step we can now switch to BDF2 if requested
-        if (physical_step == 1) temporal_order = GlobalConfig.sdluOptions.implicitTimeIntegrationMode;
+        if (physical_step > 0) temporal_order = 2;
 
         // shuffle conserved quantities:
         if (temporal_order == 1) {
@@ -358,6 +335,7 @@ void evalMatVecProd(double pseudoSimTime, double sigma)
 {
     version(complex_numbers) {
         int perturbed_ftl = to!int(GlobalConfig.n_flow_time_levels-1);
+        int perturbed_ftl = to!int(GlobalConfig.n_flow_time_levels-1);
         // We perform a Frechet derivative to evaluate J*D^(-1)v
         foreach (sblk; parallel(localSolidBlocks,1)) {
             sblk.clearSources();
@@ -365,9 +343,13 @@ void evalMatVecProd(double pseudoSimTime, double sigma)
                 scell.e[perturbed_ftl] = scell.e[0];
                 scell.e[perturbed_ftl] += complex(0.0, sigma*sblk.zed[i].re);
                 scell.T = updateTemperature(scell.sp, scell.e[perturbed_ftl]);
+                scell.e[perturbed_ftl] = scell.e[0];
+                scell.e[perturbed_ftl] += complex(0.0, sigma*sblk.zed[i].re);
+                scell.T = updateTemperature(scell.sp, scell.e[perturbed_ftl]);
             }
         }
 
+        evalRHS(pseudoSimTime, perturbed_ftl);
         evalRHS(pseudoSimTime, perturbed_ftl);
 
         foreach (sblk; parallel(localSolidBlocks,1)) {
@@ -435,38 +417,15 @@ void rpcGMRES_solve(int step, double pseudoSimTime, double dt, double eta, doubl
                 sblk.Fe[i] = scell.dedt[0].re - (1.0/dt_physical)*scell.e[0].re + (1.0/dt_physical)*scell.e[1].re;
             } else { // temporal_order = 2
                 // add BDF2 unsteady term TODO: could we need to handle this better?
-                sblk.Fe[i] = scell.dedt[0].re - (1.5/dt_physical)*scell.e[0].re + (2.0/dt_physical)*scell.e[1].re - (0.5/dt_physical)*scell.e[2].re;
+                // compute BDF2 coefficients for the adaptive time-stepping implementation
+                // note that for a fixed time-step, the coefficients should reduce down to the standard BDF2 coefficients, i.e. c1 = 3/2, c2 = 2, and c3 = 1/2
+                double c1 = 1.5/dt_physical;
+                double c2 = 2.0/dt_physical;
+                double c3 = 0.5/dt_physical;
+                sblk.Fe[cellCount] = scell.dedt[0].re - c1*scell.e[0].re + c2*scell.e[1].re - c3*scell.e[2].re;
             }
-        }
-    }
-
-    // Compute the approximate Jacobian matrix for preconditioning
-    int frozen_count = GlobalConfig.sdluOptions.frozenPreconditionerCount;
-    if (use_preconditioner && ( step%frozen_count == 0 )) {
-        foreach (sblk; parallel(localSolidBlocks,1)) {
-            sblk.evaluate_jacobian();
-            foreach ( ref entry; sblk.jacobian.local.aa) { entry *= -1; }
-            foreach (cell; sblk.cells) {
-                double dtInv = 1.0/dt;
-                if (dual_time_stepping) {
-                    if (temporal_order == 1) {
-                        dtInv = dtInv + 1.0/dt_physical;
-                    } else {
-                        double dtInv_physical  = 1.5/dt_physical;
-                        dtInv = dtInv + dtInv_physical;
-                    }
-                }
-                sblk.jacobian.local[cell.id,cell.id] = sblk.jacobian.local[cell.id,cell.id] + dtInv;
-            }
-            nm.smla.decompILU0(sblk.jacobian.local);
-        }
-    }
-
-    // Determine the max rates in F(e) for scaling the linear system
-    foreach (sblk; parallel(localSolidBlocks,1)) {
-        sblk.maxRate = 0.0;
-        foreach (i, cell; sblk.cells) {
-            sblk.maxRate = fmax(sblk.maxRate, fabs(sblk.Fe[i]));
+            cellCount += 1;
+            sblk.maxRate = fmax(sblk.maxRate, fabs(scell.dedt[0].re));
         }
     }
     double maxRate = 0.0;
@@ -501,77 +460,58 @@ void rpcGMRES_solve(int step, double pseudoSimTime, double dt, double eta, doubl
     }
     unscaledNorm2 = sqrt(unscaledNorm2);
 
-    // the remainder of the routine closely follows the structure of rpcGMRES found in nm/smla.d
-    // we set the initial guess to zero
-    foreach (sblk; parallel(localSolidBlocks,1)) { sblk.x0[] = 0.0; }
-
-    // Start outer-loop of restarted GMRES
-    for ( r = 0; r < maxRestarts; r++ ) {
-
-        // Initialise some arrays and matrices that have already been allocated
-        g0[] = 0.0;
-        g1[] = 0.0;
-        H0.zeros();
-        H1.zeros();
-        Gamma.eye();
-
-        // 1. Evaluate r0 = b - A.x0, beta, v1
-
-        // evaluate A.x0 using a Frechet derivative (note that the zed[] array is baked into the evalJacobianVecProd routine).
-        foreach (sblk; parallel(localSolidBlocks,1)) { sblk.zed[] = sblk.x0[]; }
-
-        // Prepare 'w' with (I/dt)(P^-1)v term;
-        foreach (sblk; parallel(localSolidBlocks,1)) {
-            foreach (i, cell; sblk.cells) {
-                double dtInv = 1.0/dt;
-                if (dual_time_stepping) {
-                    if (temporal_order == 1) {
-                        dtInv = dtInv + 1.0/dt_physical;
-                    } else {
-                        dtInv = dtInv + 1.5/dt_physical;
-                    }
+    // evaluate precondition matrix
+    foreach (sblk; parallel(localSolidBlocks,1)) {
+        sblk.evaluate_jacobian();
+        foreach ( ref entry; sblk.jacobian.local.aa) { entry *= -1; }
+        foreach (cell; sblk.cells) {
+            double dtInv = 1.0/dt;
+            if (dual_time_stepping) {
+                if (temporal_order == 1) {
+                    dtInv = dtInv + 1.0/dt_physical;
+                } else {
+                    double dtInv_physical  = 1.5/dt_physical;
+                    dtInv = dtInv + dtInv_physical;
                 }
-                sblk.w[i] = dtInv*sblk.zed[i];
             }
+            sblk.jacobian.local[cell.id,cell.id] = sblk.jacobian.local[cell.id,cell.id] + dtInv;
         }
+        nm.smla.decompILU0(sblk.jacobian.local);
+    }
 
-        // Evaluate Jz and place in z
-        evalMatVecProd(pseudoSimTime, sigma);
+    // Initialise some arrays and matrices that have already been allocated
+    g0[] = 0.0;
+    g1[] = 0.0;
+    H0.zeros();
+    H1.zeros();
 
-        // Now we can complete calculation of r0
-        foreach (sblk; parallel(localSolidBlocks,1)) {
-            foreach (k; 0 .. sblk.nvars) sblk.r0[k] = sblk.Fe[k] - (sblk.w[k] - sblk.zed[k]);
+    // We'll scale r0 against these max rates of change.
+    // r0 = b - A*x0
+    // Taking x0 = [0] (as is common) gives r0 = b = FU
+    // apply scaling
+    foreach (sblk; parallel(localSolidBlocks,1)) {
+        sblk.x0[] = 0.0;
+        int cellCount = 0;
+        foreach (scell; sblk.cells) {
+            sblk.r0[cellCount] = (1./sblk.maxRate)*sblk.Fe[cellCount]+1.0e-50;
+            cellCount += 1;
         }
+    }
 
-        // apply the system scaling to r0
-        double eps = 1.0e-50;
-        foreach (sblk; parallel(localSolidBlocks,1)) {
-            foreach (i, cell; sblk.cells) {
-                sblk.r0[i] = (1.0/sblk.maxRate)*sblk.Fe[i];
-                // we have observed that sometimes the nonlinear solver can find a solution such that F(e) is exactly 0.0,
-                // this causes division by zero throughout the GMRES algorithm, so we add on a very small finite number
-                // to r0. This appears to alleviate the issue without degrading convergence.
-                sblk.r0[i] += eps;
-            }
+    // Then compute v = r0/||r0||
+    double beta;
+    mixin(dot_over_blocks("beta", "r0", "r0"));
+    version(mpi_parallel) {
+        MPI_Allreduce(MPI_IN_PLACE, &(beta.re), 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+    }
+    beta = sqrt(beta);
+    g0[0] = beta;
+    foreach (sblk; parallel(localSolidBlocks,1)) {
+        foreach (k; 0 .. sblk.nvars) {
+            sblk.v[k] = sblk.r0[k]/beta;
+            sblk.V[k,0] = sblk.v[k];
         }
-
-        // then compute v = r0/||r0|| and set first residual entry
-        mixin(dot_over_blocks("beta", "r0", "r0"));
-        version(mpi_parallel) {
-            // NOTE: this dot product has been observed to be sensitive to the order of operations,
-            //       the use of MPI_Allreduce means that the same convergence behaviour can not be expected
-            //       for a different mapping of blocks over the MPI tasks and/or a shared memory calculation
-            //       2022-09-30 (KAD).
-            MPI_Allreduce(MPI_IN_PLACE, &(beta.re), 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
-        }
-        beta = sqrt(beta);
-        g0[0] = beta;
-        foreach (sblk; parallel(localSolidBlocks,1)) {
-            foreach (k; 0 .. sblk.nvars) {
-                sblk.v[k] = sblk.r0[k]/beta;
-                sblk.V[k,0] = sblk.v[k];
-            }
-        }
+    }
 
         // Compute outer tolerance on first restart and store initial residual
         if (r == 0) {
