@@ -26,6 +26,7 @@ import std.file;
 import std.array;
 import std.format;
 import std.algorithm;
+import std.algorithm;
 
 import util.lua;
 import util.lua_service;
@@ -1888,6 +1889,27 @@ void set_config_for_core(JSONValue jsonData)
     // Parameters controlling convective update
     //
     mixin(update_enum("gasdynamic_update_scheme", "gasdynamic_update_scheme", "update_scheme_from_name"));
+    version(nk_accelerator) {
+        // We need temporalIntegrationMode to fill n_flow_time_levels for the Newton-Krylov solver,
+        // this parameter is sitting in the steady-state solver options in the control file,
+        // which at this point in the initialisation hasn't been read in yet. So we need to dip
+        // into the control file and pull this information out here. The remainder of the control
+        // file will be imported at a later stage.
+        // TODO: should we consider reading the control file earlier or setting this variable later? KAD 23-08-2023
+        JSONValue jsonCntrlData = readJSONfile("config/"~cfg.base_file_name~".control");
+        auto sssOptions = jsonCntrlData["steady_state_solver_options"];
+        auto ssso = &(cfg.sssOptions);
+        ssso.temporalIntegrationMode = getJSONint(sssOptions, "temporal_integration_mode", ssso.temporalIntegrationMode);
+        cfg.n_flow_time_levels = 3 + cfg.sssOptions.temporalIntegrationMode;
+        if (cfg.coupling_with_solid_domains == SolidDomainCoupling.steady_fluid_transient_solid) {
+            // for the steady-fluid transient-solid CHT solver we need to ensure that the arrays are sized appropriately
+            // for both the implicit and explicit update schemes.
+            auto n_flow_time_levels_for_explicit_update = 1 + number_of_stages_for_update_scheme(cfg.gasdynamic_update_scheme);
+            cfg.n_flow_time_levels = max(cfg.n_flow_time_levels, n_flow_time_levels_for_explicit_update);
+        }
+    } else {
+        cfg.n_flow_time_levels = 1 + number_of_stages_for_update_scheme(cfg.gasdynamic_update_scheme);
+    }
     mixin(update_bool("eval_udf_source_terms_at_each_stage", "eval_udf_source_terms_at_each_stage"));
     // The CFL schedule arrives as a pair of tables that should have at least one entry each.
     int cfl_schedule_length = getJSONint(jsonData, "cfl_schedule_length", 1);
