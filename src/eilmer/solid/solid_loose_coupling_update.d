@@ -135,6 +135,7 @@ void integrate_solid_in_time_implicit(double target_time, bool init_precondition
     auto eta = GlobalConfig.sdluOptions.GMRESSolveTolerance;
     auto sigma = GlobalConfig.sdluOptions.perturbationSize;
     auto tol = GlobalConfig.sdluOptions.NewtonSolveTolerance;
+    auto use_preconditioner = GlobalConfig.sdluOptions.usePreconditioner;
 
     // fill out all entries in the conserved quantity vector with the initial state
     foreach (sblk; parallel(localSolidBlocks,1)) {
@@ -146,7 +147,7 @@ void integrate_solid_in_time_implicit(double target_time, bool init_precondition
     }
 
     // initialize the precondition matrix
-    if (init_precondition_matrix) {
+    if (init_precondition_matrix && use_preconditioner) {
         int spatial_order = 0;
         evalRHS(0.0, 0); // ensure the ghost cells are filled with good data
         foreach (sblk; parallel(localSolidBlocks,1)) {
@@ -200,7 +201,11 @@ void integrate_solid_in_time_implicit(double target_time, bool init_precondition
             SimState.step = step;
 
             // implicit solid update
+<<<<<<< HEAD
             rpcGMRES_solve(step, physicalSimTime, dt, eta, sigma, dual_time_stepping, temporal_order, dt_physical, residual);
+=======
+            rpcGMRES_solve(step, physicalSimTime, dt, eta, sigma, dual_time_stepping, temporal_order, dt_physical, normNew, use_preconditioner);
+>>>>>>> d654d657 (solid: added more user config parameters for GMRES...)
             foreach (sblk; parallel(localSolidBlocks,1)) {
                 int ftl = to!int(sblk.myConfig.n_flow_time_levels-1);
                 int ftl = to!int(sblk.myConfig.n_flow_time_levels-1);
@@ -391,7 +396,11 @@ foreach (sblk; localSolidBlocks) `~dot~` += sblk.dotAcc;`;
 }
 
 void rpcGMRES_solve(int step, double pseudoSimTime, double dt, double eta, double sigma,
+<<<<<<< HEAD
                     bool dual_time_stepping, int temporal_order, double dt_physical, bool use_preconditioner)
+=======
+                    bool dual_time_stepping, int temporal_order, double dt_physical, ref double residual, bool use_preconditioner)
+>>>>>>> d654d657 (solid: added more user config parameters for GMRES...)
 {
 
     int maxIters = GlobalConfig.sdluOptions.maxGMRESIterations;
@@ -439,22 +448,25 @@ void rpcGMRES_solve(int step, double pseudoSimTime, double dt, double eta, doubl
     }
 
     // Compute the approximate Jacobian matrix for preconditioning
-    foreach (sblk; parallel(localSolidBlocks,1)) {
-        sblk.evaluate_jacobian();
-        foreach ( ref entry; sblk.jacobian.local.aa) { entry *= -1; }
-        foreach (cell; sblk.cells) {
-            double dtInv = 1.0/dt;
-            if (dual_time_stepping) {
-                if (temporal_order == 1) {
-                    dtInv = dtInv + 1.0/dt_physical;
-                } else {
-                    double dtInv_physical  = 1.5/dt_physical;
-                    dtInv = dtInv + dtInv_physical;
+    int frozen_count = GlobalConfig.sdluOptions.frozenPreconditionerCount;
+    if (use_preconditioner && ( step%frozen_count == 0 )) {
+        foreach (sblk; parallel(localSolidBlocks,1)) {
+            sblk.evaluate_jacobian();
+            foreach ( ref entry; sblk.jacobian.local.aa) { entry *= -1; }
+            foreach (cell; sblk.cells) {
+                double dtInv = 1.0/dt;
+                if (dual_time_stepping) {
+                    if (temporal_order == 1) {
+                        dtInv = dtInv + 1.0/dt_physical;
+                    } else {
+                        double dtInv_physical  = 1.5/dt_physical;
+                        dtInv = dtInv + dtInv_physical;
+                    }
                 }
+                sblk.jacobian.local[cell.id,cell.id] = sblk.jacobian.local[cell.id,cell.id] + dtInv;
             }
-            sblk.jacobian.local[cell.id,cell.id] = sblk.jacobian.local[cell.id,cell.id] + dtInv;
+            nm.smla.decompILU0(sblk.jacobian.local);
         }
-        nm.smla.decompILU0(sblk.jacobian.local);
     }
 
     // Determine the max rates in F(e) for scaling the linear system
@@ -596,12 +608,15 @@ void rpcGMRES_solve(int step, double pseudoSimTime, double dt, double eta, doubl
             }
 
             // apply preconditioning here
-            //foreach (sblk; parallel(localSolidBlocks,1)) {
-            //    sblk.zed[] = sblk.v[];
-            //}
-            foreach (sblk; parallel(localSolidBlocks,1)) {
-                sblk.zed[] = sblk.v[];
-                nm.smla.solve(sblk.jacobian.local, sblk.zed);
+            if (use_preconditioner) {
+                foreach (sblk; parallel(localSolidBlocks,1)) {
+                    sblk.zed[] = sblk.v[];
+                    nm.smla.solve(sblk.jacobian.local, sblk.zed);
+                }
+            } else {
+                foreach (sblk; parallel(localSolidBlocks,1)) {
+                    sblk.zed[] = sblk.v[];
+                }
             }
 
             // Prepare 'w' with (I/dt)(P^-1)v term;
@@ -768,12 +783,15 @@ void rpcGMRES_solve(int step, double pseudoSimTime, double dt, double eta, doubl
         }
 
         // Apply preconditioning step
-        //foreach(sblk; parallel(localSolidBlocks,1)) {
-        //    sblk.de[] = sblk.zed[];
-        //}
-        foreach(sblk; parallel(localSolidBlocks,1)) {
-            sblk.de[] = sblk.zed[];
-            nm.smla.solve(sblk.jacobian.local, sblk.de);
+        if (use_preconditioner) {
+            foreach(sblk; parallel(localSolidBlocks,1)) {
+                sblk.de[] = sblk.zed[];
+                nm.smla.solve(sblk.jacobian.local, sblk.de);
+            }
+        } else {
+            foreach(sblk; parallel(localSolidBlocks,1)) {
+                sblk.de[] = sblk.zed[];
+            }
         }
 
         foreach (sblk; parallel(localSolidBlocks,1)) {
