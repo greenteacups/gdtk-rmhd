@@ -78,13 +78,10 @@ double determine_dt(double cfl_value)
     return dt;
 } // end determine_dt
 
-void integrate_solid_in_time_explicit(double target_time)
+void integrate_solid_in_time_explicit(double dt_couple)
 {
-    auto wallClockStart = Clock.currTime();
-    double wallClockElapsed;
-
     auto super_time_steps = GlobalConfig.sdluOptions.superTimeSteps;
-    GlobalConfig.max_time = target_time;
+    GlobalConfig.max_time = dt_couple;
     SimState.s_RKL = super_time_steps;
     SimState.time = 0.0;
     foreach (blk; parallel(localFluidBlocks,1)) { blk.active = false; }
@@ -97,13 +94,15 @@ void integrate_solid_in_time_explicit(double target_time)
     }
 }
 
-void integrate_solid_in_time_implicit(double target_time, bool init_precondition_matrix)
+void integrate_solid_in_time_implicit(double dt_couple, bool init_precondition_matrix)
 {
     // set some time parameters
+    auto cfl = GlobalConfig.sdluOptions.cfl;
     int temporal_order = 1;
+    bool dual_time_stepping = false;
+    if (temporal_order > 0) { dual_time_stepping = true; }
+    auto nSteps = GlobalConfig.sdluOptions.maxNewtonIterations;
     int startStep = 0;
-    int nSteps = 1_000_000;
-    bool dual_time_stepping = true;
     double target_physical_time = dt_couple;
     double physicalSimTime = 0.0;
     int physical_step = 0;
@@ -130,9 +129,9 @@ void integrate_solid_in_time_implicit(double target_time, bool init_precondition
     int startStep = 0;
     double residual = 0.0;
 
-    double eta = 0.1;
-    double sigma = 1.0e-50;
-    double tol = 1.0e1;
+    auto eta = GlobalConfig.sdluOptions.GMRESSolveTolerance;
+    auto sigma = GlobalConfig.sdluOptions.perturbationSize;
+    auto tol = GlobalConfig.sdluOptions.NewtonSolveTolerance;
 
     // fill out all entries in the conserved quantity vector with the initial state
     foreach (sblk; parallel(localSolidBlocks,1)) {
@@ -225,7 +224,7 @@ void integrate_solid_in_time_implicit(double target_time, bool init_precondition
         }
 
         startStep = SimState.step+1;
-        if (physical_step > 0) temporal_order = 2;
+        if (physical_step == 1) temporal_order = GlobalConfig.sdluOptions.implicitTimeIntegrationMode;
 
         // shuffle conserved quantities:
         if (temporal_order == 1) {
