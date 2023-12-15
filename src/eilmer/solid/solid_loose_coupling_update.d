@@ -78,13 +78,14 @@ double determine_dt(double cfl_value)
     return dt;
 } // end determine_dt
 
-void integrate_solid_in_time_explicit(double dt_couple)
+void integrate_solid_in_time_explicit(double target_time)
 {
     auto super_time_steps = GlobalConfig.sdluOptions.superTimeSteps;
-    GlobalConfig.max_time = dt_couple;
+    GlobalConfig.max_time = target_time;
     SimState.s_RKL = super_time_steps;
     SimState.time = 0.0;
     foreach (blk; parallel(localFluidBlocks,1)) { blk.active = false; }
+    integrate_in_time(target_time);
     integrate_in_time(target_time);
     foreach (blk; parallel(localFluidBlocks,1)) { blk.active = true; }
 
@@ -94,16 +95,10 @@ void integrate_solid_in_time_explicit(double dt_couple)
     }
 }
 
-void integrate_solid_in_time_implicit(double dt_couple, bool init_precondition_matrix)
+void integrate_solid_in_time_implicit(double target_time, bool init_precondition_matrix)
 {
-    // set some time parameters
-    auto cfl = GlobalConfig.sdluOptions.cfl;
-    int temporal_order = 1;
+    // set some time integration parameters
     bool dual_time_stepping = false;
-    if (temporal_order > 0) { dual_time_stepping = true; }
-    auto nSteps = GlobalConfig.sdluOptions.maxNewtonIterations;
-    int startStep = 0;
-    double target_physical_time = dt_couple;
     double physicalSimTime = 0.0;
     int physical_step = 0;
     double target_physical_time, dt_physical;
@@ -128,7 +123,9 @@ void integrate_solid_in_time_implicit(double dt_couple, bool init_precondition_m
     }
     int startStep = 0;
     double residual = 0.0;
-
+    double normNew, normRef;
+    auto cfl = GlobalConfig.sdluOptions.cfl;
+    auto nSteps = GlobalConfig.sdluOptions.maxNewtonIterations;
     auto eta = GlobalConfig.sdluOptions.GMRESSolveTolerance;
     auto sigma = GlobalConfig.sdluOptions.perturbationSize;
     auto tol = GlobalConfig.sdluOptions.NewtonSolveTolerance;
@@ -143,12 +140,11 @@ void integrate_solid_in_time_implicit(double dt_couple, bool init_precondition_m
     }
 
     // initialize the precondition matrix
-    if (init_precondition_matrix && use_preconditioner) {
-        int spatial_order = GlobalConfig.sdluOptions.preconditionerApproximation;
-        int fill_in = GlobalConfig.sdluOptions.preconditionerFillIn;
+    if (init_precondition_matrix) {
+        int spatial_order = 0;
         evalRHS(0.0, 0); // ensure the ghost cells are filled with good data
         foreach (sblk; parallel(localSolidBlocks,1)) {
-            sblk.initialize_jacobian(spatial_order, sigma, fill_in);
+            sblk.initialize_jacobian(spatial_order, sigma);
         }
     }
 
@@ -174,10 +170,13 @@ void integrate_solid_in_time_implicit(double dt_couple, bool init_precondition_m
     normRef = sqrt(normRef);
 
     // start of main time-stepping loop
-    while (physicalSimTime <= target_physical_time) {
+    while (physicalSimTime < target_physical_time && physical_step < max_physical_steps) {
+
         if (GlobalConfig.is_master_task) {
             writeln("TIME: ", physicalSimTime, "    TIME-STEP: ", dt_physical);
+            writeln("TIME: ", physicalSimTime, "    TIME-STEP: ", dt_physical);
         }
+
 
         // we need to evaluate time-dependent boundary conditions and source terms
         // at the future state, so we update the time at the start of a step
@@ -195,7 +194,7 @@ void integrate_solid_in_time_implicit(double dt_couple, bool init_precondition_m
             SimState.step = step;
 
             // implicit solid update
-            rpcGMRES_solve(step, physicalSimTime, dt, eta, sigma, dual_time_stepping, temporal_order, dt_physical, use_preconditioner);
+            rpcGMRES_solve(step, physicalSimTime, dt, eta, sigma, dual_time_stepping, temporal_order, dt_physical, residual);
             foreach (sblk; parallel(localSolidBlocks,1)) {
                 int ftl = to!int(sblk.myConfig.n_flow_time_levels-1);
                 int ftl = to!int(sblk.myConfig.n_flow_time_levels-1);
@@ -218,12 +217,17 @@ void integrate_solid_in_time_implicit(double dt_couple, bool init_precondition_m
 
             if (GlobalConfig.is_master_task) {
                 writeln("RELATIVE RESIDUAL: ", normNew/normRef);
+                writeln("RELATIVE RESIDUAL: ", normNew/normRef);
             }
+
+            if (normNew/normRef < tol) { break; }
 
             if (normNew/normRef < tol) { break; }
         }
 
         startStep = SimState.step+1;
+
+        // after a BDF1 step we can now switch to BDF2 if requested
         if (physical_step == 1) temporal_order = GlobalConfig.sdluOptions.implicitTimeIntegrationMode;
 
         // shuffle conserved quantities:
@@ -265,11 +269,6 @@ void integrate_solid_in_time_implicit(double dt_couple, bool init_precondition_m
             MPI_Allreduce(MPI_IN_PLACE, &normRef, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
         }
         normRef = sqrt(normRef);
-
-        wallClockElapsed = 1.0e-3*(Clock.currTime() - wallClockStart).total!"msecs"();
-        if (GlobalConfig.is_master_task) {
-            writef("WALL-CLOCK (s): %.8f \n", wallClockElapsed);
-        }
     }
 }
 
@@ -413,7 +412,6 @@ void rpcGMRES_solve(int step, double pseudoSimTime, double dt, double eta, doubl
     evalRHS(pseudoSimTime, 0);
 
     foreach (sblk; parallel(localSolidBlocks,1)) {
-        sblk.maxRate = 0.0;
         foreach (i, scell; sblk.cells) {
             if (temporal_order == 0) {
                 sblk.Fe[i] = scell.dedt[0].re;
