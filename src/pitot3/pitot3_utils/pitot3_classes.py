@@ -3562,6 +3562,7 @@ class Nozzle(object):
                 print(f"Our gas state has a room temperature only gas model and we are below the maximum temperature for using that model of {maximum_temp_for_room_temperature_only_gmodel}.")
                 print('So we are going to try doing the nozzle expansion with that model.')
 
+<<<<<<< HEAD
                 # this can't use the new function I made as it in fact needs two gas states here...
 
                 original_gmodel = supersonic_nozzle_entrance_state.get_gas_state_gmodel()
@@ -3598,6 +3599,42 @@ class Nozzle(object):
 
                 exit_gas_state = GasState(gmodel_without_ions)
 
+=======
+                original_gmodel = supersonic_nozzle_entrance_state.get_gas_state_gmodel()
+
+                room_temperature_only_gmodel = supersonic_nozzle_entrance_state.get_room_temperature_only_gmodel()
+                room_temperature_only_gas_flow = GasFlow(room_temperature_only_gmodel)
+
+                entrance_gas_state = supersonic_nozzle_entrance_state.get_gas_state()
+
+                entrance_gas_state.gmodel = room_temperature_only_gmodel
+
+                exit_gas_state = GasState(room_temperature_only_gmodel)
+
+                supersonic_expansion_input_dict['state1'] = entrance_gas_state
+                supersonic_expansion_input_dict['state2'] = exit_gas_state
+
+                v_exit = room_temperature_only_gas_flow.steady_flow_with_area_change(**supersonic_expansion_input_dict)
+
+                entrance_gas_state.gmodel = original_gmodel
+                exit_gas_state.gmodel = original_gmodel
+
+            elif self.entrance_state.get_gas_state_gmodel_without_ions() and self.entrance_state.get_gas_state().T < cutoff_temp_for_no_ions:
+                print(
+                    f"We are below the set cutoff temperature of {cutoff_temp_for_no_ions} K so we are going to try performing the nozzle expansion without ions.")
+
+                original_gmodel = supersonic_nozzle_entrance_state.get_gas_state_gmodel()
+
+                gmodel_without_ions = supersonic_nozzle_entrance_state.get_gas_state_gmodel_without_ions()
+                gas_flow_without_ions = GasFlow(gmodel_without_ions)
+
+                entrance_gas_state = supersonic_nozzle_entrance_state.get_gas_state()
+
+                entrance_gas_state.gmodel = gmodel_without_ions
+
+                exit_gas_state = GasState(gmodel_without_ions)
+
+>>>>>>> aece0eae (pitot3: simplified detailed printing, improved RST nozzle calcs)
                 supersonic_expansion_input_dict['state1'] = entrance_gas_state
                 supersonic_expansion_input_dict['state2'] = exit_gas_state
 
