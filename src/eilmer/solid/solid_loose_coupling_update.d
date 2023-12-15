@@ -394,7 +394,7 @@ void rpcGMRES_solve(int step, double pseudoSimTime, double dt, double eta, doubl
                     bool dual_time_stepping, int temporal_order, double dt_physical, bool use_preconditioner)
 {
 
-    int maxIters = GlobalConfig.sssOptions.maxOuterIterations;
+    int maxIters = GlobalConfig.sdluOptions.maxGMRESIterations;
     // We add 1 because the user thinks of "re"starts, so they
     // might legitimately ask for no restarts. We still have
     // to execute at least once.
