@@ -80,6 +80,9 @@ double determine_dt(double cfl_value)
 
 void integrate_solid_in_time_explicit(double target_time)
 {
+    auto wallClockStart = Clock.currTime();
+    double wallClockElapsed;
+
     auto super_time_steps = GlobalConfig.sdluOptions.superTimeSteps;
     GlobalConfig.max_time = target_time;
     SimState.s_RKL = super_time_steps;
@@ -97,6 +100,9 @@ void integrate_solid_in_time_explicit(double target_time)
 
 void integrate_solid_in_time_implicit(double target_time, bool init_precondition_matrix)
 {
+    auto wallClockStart = Clock.currTime();
+    double wallClockElapsed;
+
     // set some time integration parameters
     bool dual_time_stepping = false;
     double physicalSimTime = 0.0;
@@ -269,6 +275,11 @@ void integrate_solid_in_time_implicit(double target_time, bool init_precondition
             MPI_Allreduce(MPI_IN_PLACE, &normRef, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
         }
         normRef = sqrt(normRef);
+
+        wallClockElapsed = 1.0e-3*(Clock.currTime() - wallClockStart).total!"msecs"();
+        if (GlobalConfig.is_master_task) {
+            writef("WALL-CLOCK (s): %.8f \n", wallClockElapsed);
+        }
     }
 }
 
