@@ -148,10 +148,11 @@ void integrate_solid_in_time_implicit(double target_time, bool init_precondition
 
     // initialize the precondition matrix
     if (init_precondition_matrix && use_preconditioner) {
-        int spatial_order = 0;
+        int spatial_order = GlobalConfig.sdluOptions.preconditionerApproximation;
+        int fill_in = GlobalConfig.sdluOptions.preconditionerFillIn;
         evalRHS(0.0, 0); // ensure the ghost cells are filled with good data
         foreach (sblk; parallel(localSolidBlocks,1)) {
-            sblk.initialize_jacobian(spatial_order, sigma);
+            sblk.initialize_jacobian(spatial_order, sigma, fill_in);
         }
     }
 
