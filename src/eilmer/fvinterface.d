@@ -967,11 +967,12 @@ public:
         //For testing constant conductivities
         number mu0 = 4 * std.math.PI * 1e-7;    // Permeability of free space
 
-        number L = 0.4; // Characterisitc length scale
-        number Rem = 1.0;
-        number u0 = sqrt(fs.vel.x^^2 + fs.vel.y^^2);
-        sigma = Rem/(mu0*u0*L);
-        if(sigma < 1.0) {sigma = 1.0;}
+        //number L = 0.4; // Characterisitc length scale
+        //number Rem = 1.0;
+        //number u0 = sqrt(fs.vel.x^^2 + fs.vel.y^^2);
+        sigma = 400; //Rem/(mu0*u0*L);
+        if(pos.y < 0.0){sigma = 1.0;}
+        //if(sigma < 1.0) {sigma = 1.0;}
 
         // Calculate Diffusive Flux Terms:
         number eta = 1/(mu0*sigma);     // Diffusivity
@@ -987,13 +988,13 @@ public:
         // Calculate diffusion terms
         number Bxdiffusion = eta * (dBxdy - dBydx) *n.y;
         number Bydiffusion = eta * (dBydx - dBxdy) *n.x;
-        number ediffusion = (1/1)* eta * (fs.B.y*(dBydx - dBxdy)*n.x -  fs.B.x*(dBydx - dBxdy)*n.y);
+        number ediffusion = eta * (fs.B.y*(dBydx - dBxdy)*n.x -  fs.B.x*(dBydx - dBxdy)*n.y);
 
         auto cqi = myConfig.cqi;
         if (SimState.time > 0.0e-4) { // Temporary time - for scaling and rmhd delay
             F[cqi.xB] -= Bxdiffusion;
             F[cqi.yB] -= Bydiffusion;
-            F[cqi.totEnergy] -= ediffusion;
+            //F[cqi.totEnergy] -= ediffusion;
         }
         else {
             F[cqi.xB] = 0.0;
