@@ -1603,6 +1603,40 @@ function ExchangeBC_FullFace:new(o)
    return o
 end
 
+WallBC_NoSlip_BField = BoundaryCondition:new()
+WallBC_NoSlip_BField.type = "wall_no_slip_bfield"
+function WallBC_NoSlip_BField:new(o)
+   local flag = type(self)=='table' and self.type=='wall_no_slip_bfield'
+   if not flag then
+      error("Make sure that you are using WallBC_NoSlip_BField:new{}"..
+               " and not WallBC_NoSlip_BField.new{}", 2)
+   end
+   o = o or {}
+   flag = checkAllowedNames(o, {"otherBlock", "otherFace", "orientation",
+                                "reorient_vector_quantities", "Rmatrix",
+                                "label", "group"})
+   if not flag then
+      error("Invalid name for item supplied to WallBC_NoSlip_BField constructor.", 2)
+   end
+   o = BoundaryCondition.new(self, o)
+   o.is_wall_with_viscous_effects = true
+   o.preReconAction = { FullFaceCopy:new{otherBlock=o.otherBlock,
+                                         otherFace=o.otherFace,
+                                         orientation=o.orientation,
+                                         reorient_vector_quantities=o.reorient_vector_quantities,
+                                         Rmatrix=o.Rmatrix},
+                        InternalCopyThenReflect:new()}
+
+   o.preSpatialDerivActionAtBndryFaces = { CopyCellData:new(), ZeroSlipWallVelocity:new(),
+					   FixedT:new{Twall=o.Twall}}
+
+   if o.user_post_diff_flux then
+      o.postDiffFluxAction = {UserDefinedFlux:new{fileName=o.user_post_diff_flux}}
+   end
+   o.is_configured = true
+   return o
+end
+
 ExchangeBC_FullFacePlusUDF = BoundaryCondition:new()
 ExchangeBC_FullFacePlusUDF.type = "exchange_over_full_face_plus_udf"
 function ExchangeBC_FullFacePlusUDF:new(o)
