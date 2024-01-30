@@ -72,199 +72,79 @@ def eilmer4_CEAGas_input_file_reader(gmodel_filename):
     #   trace = 1e-06
     # }
 
-    with open(os.path.expandvars(gmodel_filename)) as gmodel_file:
+    with open(gmodel_filename) as gmodel_file:
         for line in gmodel_file:
 
-            if line[0:2] != '--':  # -- is the lua comment character
+            if line[0:2] != '--' and '=' in line:  # -- is the lua comment character and any line we need will have = in it...
 
-                if '=' in line:
+                split_line = line.strip().split('=')
 
-                    split_line = line.strip().split('=')
+                variable_name = split_line[0].strip()
+                variable = split_line[1].strip()
 
-                    variable_name = split_line[0].strip()
-                    variable = split_line[1].strip()
-                else:
-                    split_line = None
-                    variable_name = None
-                    variable = None
+                if variable_name in variables_to_look_for_list:
+                    # we just have a case for each variable as that seemed easiest to me...
+                    if variable_name == 'mixtureName':
+                        # we add without ions to the end of it
 
-                if variable_name == 'mixtureName':
-                    # we add without ions to the end of it
-
-                    characters_to_replace = ["'", '"', ',']
-
-                    for character in characters_to_replace:
-                        variable = variable.replace(character, '')
-
-                    mixtureName = variable
-                elif variable_name == 'speciesList':
-
-                    # the species list could be over multiple lines so we gotta be careful here...
-                    # if we do not have a '}' in the line, it will go over multiple lines...
-                    if '}' not in line:
-                        more_species = True
-                    else:
-                        more_species = False
-
-                    # we need to split the input into a list...
-                    split_species_list = variable.split(',')
-
-                    speciesList = []
-
-                    characters_to_replace = ['{', '}', "'", '"', ' ']
-
-                    for species in split_species_list:
+                        characters_to_replace = ["'", '"', ',']
 
                         for character in characters_to_replace:
-                            species = species.replace(character, '')
+                            variable = variable.replace(character, '')
 
-                        if species in ['C2H2', 'C4H2']:
-                            continue  # i.e. don't do anything
-                        elif species == 'acetylene':
-                            species = 'C2H2,acetylene'
-                        elif species == 'butadiyne':
-                            species = 'C4H2,butadiyne'
-                        elif species == 'vinylidene':
-                            species = 'C2H2,vinylidene'
+                        mixtureName = variable
+                    if variable_name == 'speciesList':
+                        # we need to split the input into a list...
+                        split_species_list = variable.split(',')
 
-                        if species:
-                            speciesList.append(species)
+                        speciesList = []
 
-                # as this will be needed if the species go over multiple lines...
-                elif 'more_species' in locals() and more_species:
+                        characters_to_replace = ['{', '}', "'", '"']
 
-                    # see if we have finally got to the end yet...
+                        for species in split_species_list:
+                            for character in characters_to_replace:
+                                species = species.replace(character, '')
 
-                    if '}' not in line:
-                        more_species = True
-                    else:
-                        more_species = False
+                            if species:
+                                speciesList.append(species)
 
-                    # we need to split the input into a list...
-                    split_species_list = line.strip().split(',')
+                    if variable_name == 'reactants':
+                        # this will already be kind of split for us by the original = split... so let us recombine that
+                        # and then keep going
 
-                    characters_to_replace = ['{', '}', "'", '"', ' ']
+                        variable = '='.join(split_line[1:])
 
-                    for species in split_species_list:
+                        split_reactants_list = variable.split(',')
+
+                        characters_to_replace = ['{', '}', "'", '"', ' ', ',']
+
+                        reactants = {}
+
+                        for reactant in split_reactants_list:
+                            for character in characters_to_replace:
+                                reactant = reactant.replace(character, '')
+
+                            split_reactant = reactant.split('=')
+
+                            if len(split_reactant) == 2:
+                                reactants[split_reactant[0]] = float(split_reactant[1])
+
+                    if variable_name == 'inputUnits':
+
+                        characters_to_replace = ["'", '"', ',']
 
                         for character in characters_to_replace:
-                            species = species.replace(character, '')
+                            variable = variable.replace(character, '')
 
-                        if species in ['C2H2', 'C4H2']:
-                            continue  # i.e. don't do anything
-                        elif species == 'acetylene':
-                            species = 'C2H2,acetylene'
-                        elif species == 'butadiyne':
-                            species = 'C4H2,butadiyne'
-                        elif species == 'vinylidene':
-                            species = 'C2H2,vinylidene'
+                        inputUnits = variable
 
-                        if species:
-                            speciesList.append(species)
+                    if variable_name == 'withIons':
+                        withIons = variable
 
-                elif variable_name == 'reactants':
-                    # this will already be kind of split for us by the original = split... so let us recombine that
-                    # and then keep going
-
-                    variable = '='.join(split_line[1:])
-
-                    split_reactants_list = variable.split(',')
-
-                    characters_to_replace = ['{', '}', "'", '"', ' ', ',']
-
-                    reactants = {}
-
-                    for reactant in split_reactants_list:
-                        for character in characters_to_replace:
-                            reactant = reactant.replace(character, '')
-
-                        split_reactant = reactant.split('=')
-
-                        if len(split_reactant) == 2:
-                            reactants[split_reactant[0]] = float(split_reactant[1])
-
-                elif variable_name == 'inputUnits':
-
-                    characters_to_replace = ["'", '"', ',']
-
-                    for character in characters_to_replace:
-                        variable = variable.replace(character, '')
-
-                    inputUnits = variable
-
-                elif variable_name == 'withIons':
-                    withIons = variable
-
-                elif variable_name == 'trace':
-                    trace = float(variable)
+                    if variable_name == 'trace':
+                        trace = float(variable)
 
     return mixtureName, speciesList, reactants, inputUnits, withIons, trace
-
-def eilmer4_CEAGas_gmodel_room_temperature_only_creator(gmodel_filename):
-
-    """
-    This is a function which takes a link to a CEA Gas file and makes a version of it with just the starting species
-    in the current folder. It then returns the filename so the gmodel can be used in the program.
-
-    This function is needed as sometimes PITOT3 fails at room temperature when CO2 and a couple of other gases are used.
-    This gas model gets around that issue...
-
-    :param gmodel_filename:
-    :return:
-    """
-
-    mixtureName, speciesList, reactants, inputUnits, withIons, trace = eilmer4_CEAGas_input_file_reader(gmodel_filename)
-
-    # now we need to do what we need to do to remove any species which are not in the starting reactants
-
-    mixtureName = mixtureName + '-room-temperature-only'
-
-    # we start by getting the list of rectants at the start
-
-    starting_reactants = reactants.keys()
-
-    # then we only keep species in that list
-
-    speciesList_just_reactants = []
-
-    for species in speciesList:
-
-        if species in starting_reactants:
-            speciesList_just_reactants.append(species)
-
-    speciesList = speciesList_just_reactants
-
-    # don't think we need electrons at room temp...
-    withIons = False
-
-    # now we just need to give ourselves a filename for the new gmodel
-    # and make the file...
-
-    gmodel_justfilename = gmodel_filename.split('/')[-1] # remove the folders etc.
-
-    # the pitot3 format is kind of cea-gmodel-name-gas-model.lua
-    # assuming that lets remove anything like that...
-    parts_to_remove = ['cea-', '-gas-model', '.lua']
-
-    gmodel_name = gmodel_justfilename
-
-    for part in parts_to_remove:
-        gmodel_name = gmodel_name.replace(part, '')
-
-    # now we reconstitute it in the PITOT3 style...
-
-    gmodel_room_temperature_only_filename = f'cea-{gmodel_name}-room-temperature-only-gas-model.lua'
-
-    now = datetime.now()
-    dt_string = now.strftime("%d/%m/%Y %H:%M:%S")
-
-    header = f'-- modified gas model made by PITOT3 on the {dt_string} with only room temperature species for starting the code with temperamental species'
-
-    eilmer4_CEAGas_input_file_creator(gmodel_room_temperature_only_filename, mixtureName, speciesList, reactants, inputUnits,
-                                      withIons, trace, header)
-
-    return gmodel_room_temperature_only_filename
-
 
 def eilmer4_CEAGas_gmodel_without_ions_creator(gmodel_filename):
 
@@ -389,40 +269,6 @@ IdealGas = {{
 
     return ideal_gas_gmodel_filename
 
-def pitot3_species_MW_dict_loader(species_molecular_weights_filename):
-
-    import yaml
-
-    # some stuff I had to do get NO to load in yaml...
-    # from here https://stackoverflow.com/questions/36463531/pyyaml-automatically-converting-certain-keys-to-boolean-values
-
-    from yaml.loader import Reader, Scanner, Parser, Composer, SafeConstructor, Resolver
-
-    class StrictBoolSafeResolver(Resolver):
-        pass
-
-    # remove resolver entries for On/Off/Yes/No
-    for ch in "OoYyNn":
-        if len(StrictBoolSafeResolver.yaml_implicit_resolvers[ch]) == 1:
-            del StrictBoolSafeResolver.yaml_implicit_resolvers[ch]
-        else:
-            StrictBoolSafeResolver.yaml_implicit_resolvers[ch] = [x for x in
-                                                                  StrictBoolSafeResolver.yaml_implicit_resolvers[ch] if
-                                                                  x[0] != 'tag:yaml.org,2002:bool']
-
-    class StrictBoolSafeLoader(Reader, Scanner, Parser, Composer, SafeConstructor, StrictBoolSafeResolver):
-        def __init__(self, stream):
-            Reader.__init__(self, stream)
-            Scanner.__init__(self)
-            Parser.__init__(self)
-            Composer.__init__(self)
-            SafeConstructor.__init__(self)
-            StrictBoolSafeResolver.__init__(self)
-
-    species_molecular_weights_file = open(os.path.expandvars(species_molecular_weights_filename))
-    species_MW_dict = yaml.load(species_molecular_weights_file, Loader=StrictBoolSafeLoader)
-
-    return species_MW_dict
 
 def finite_wave_dp_wrapper(state1, v1, characteristic, p2, state2, gas_flow, steps=100,
                            gmodel_without_ions = None, cutoff_temp_for_no_ions = 5000.0, number_of_calculations = 10):
@@ -697,39 +543,6 @@ def finite_wave_dv_wrapper(state1, v1, characteristic, v2_target, state2, gas_fl
         state2.gmodel = state1.gmodel
 
     return v2g
-
-def room_temperature_only_gas_model_gas_state_setter(gas_state, p, T, original_gmodel_location = None, room_temperature_only_gmodel = None):
-
-        if original_gmodel_location:
-
-            # if we do not have a room temperature only gmodel yet, we need to make it from our original
-            # gmodel file, otherwise we just use it
-
-            print("Making the room temperature only gas model.")
-
-            room_temperature_only_gmodel_location = eilmer4_CEAGas_gmodel_room_temperature_only_creator(original_gmodel_location)
-
-            # if there is a room temperature only object we "trick" the fill state gas model to use that when it sets the gas
-            # state and then replace the correct gas state after. This seemed to be the best / cleanest way to do it.
-
-            room_temperature_only_gmodel = GasModel(room_temperature_only_gmodel_location)
-
-        # we grab the original gas model, replace it to do the calculation with the room temperature only one,
-        # and then change it back. a bit of a bait and switch...
-
-        original_gmodel = gas_state.gmodel
-
-        gas_state.gmodel = room_temperature_only_gmodel
-
-        gas_state.p = p
-        gas_state.T = T
-
-        gas_state.update_thermo_from_pT()
-        gas_state.update_sound_speed()
-
-        gas_state.gmodel = original_gmodel
-
-        return gas_state, room_temperature_only_gmodel
 
 def pitot3_input_yaml_file_creator(config_dict, output_filename):
     """
@@ -1326,8 +1139,7 @@ class Driver(object):
     Class to store and calculate facility driver information.
     """
 
-    def __init__(self, cfg, p_0 = None, T_0 = None, preset_gas_models_folder = None, outputUnits = 'massf',
-                 species_MW_dict = None, D_shock_tube = None):
+    def __init__(self, cfg, p_0 = None, T_0 = None, preset_gas_models_folder = None, outputUnits = 'massf', species_MW_dict = None, D_shock_tube = None):
         """
 
         :param cfg: Python dictionary which contains configuration information which is loaded into the class,
@@ -1367,8 +1179,7 @@ class Driver(object):
 
             header = f'-- Driver CEA Gas model made automatically by PITOT3 on the {dt_string}'
 
-            eilmer4_CEAGas_input_file_creator('PITOT3_cea_driver_condition', 'driver_gas',
-                                              self.driver_speciesList, self.driver_fill_composition,
+            eilmer4_CEAGas_input_file_creator('PITOT3_cea_driver_condition', 'driver_gas', self.driver_speciesList, self.driver_fill_composition,
                                               self.driver_inputUnits, self.driver_withIons, header=header)
 
             driver_gmodel_location = 'PITOT3_cea_driver_condition.lua'
@@ -1378,14 +1189,14 @@ class Driver(object):
             self.driver_gas_model = 'CEAGas'
             self.driver_fill_gas_name = cfg['driver_fill_gas_name']
 
-            driver_gmodel_location = f'{preset_gas_models_folder}/cea-{self.driver_fill_gas_name}-gas-model.lua'
+            driver_gmodel_location = '{0}/cea-{1}-gas-model.lua'.format(preset_gas_models_folder, self.driver_fill_gas_name)
 
         elif self.driver_gas_model == 'ideal-preset':
 
             self.driver_gas_model = 'ideal'
             self.driver_fill_gas_name = cfg['driver_fill_gas_name']
 
-            driver_gmodel_location = f'{preset_gas_models_folder}/ideal-{self.driver_fill_gas_name}-gas-model.lua'
+            driver_gmodel_location = '{0}/ideal-{1}-gas-model.lua'.format(preset_gas_models_folder, self.driver_fill_gas_name)
 
         elif self.driver_gas_model == 'thermally-perfect-preset':
             self.driver_gas_model = 'thermally-perfect'
@@ -1395,7 +1206,8 @@ class Driver(object):
             self.driver_fill_composition = cfg['driver_fill_composition']
             self.driver_inputUnits = cfg['driver_inputUnits']
 
-            driver_gmodel_location = f'{preset_gas_models_folder}/thermally-perfect-{self.driver_fill_gas_name}-gas-model.lua'
+            driver_gmodel_location = '{0}/thermally-perfect-{1}-gas-model.lua'.format(preset_gas_models_folder,
+                                                                                      self.driver_fill_gas_name)
 
             # the gas state input requires mass fractions, so if we inputted them great, if not, we need to calculate them...
             if self.driver_inputUnits == 'massf':
@@ -1540,6 +1352,21 @@ class Driver(object):
             # we assume that the state 4 driver is stationary
             v4i = 0.0
 
+            # make a reference gas state here...
+            reference_gas_state = GasState(self.gmodel)
+            reference_gas_state.p = p_0
+            reference_gas_state.T = T_0
+
+            if self.driver_gas_model == 'thermally-perfect':
+                reference_gas_state.massf = self.driver_fill_composition_massf
+
+            reference_gas_state.update_thermo_from_pT()
+            reference_gas_state.update_sound_speed()
+
+            # now make our facility driver object...
+            self.state4i = Facility_State('s4i', state4i, v4i, reference_gas_state=reference_gas_state,
+                                          species_MW_dict=species_MW_dict, outputUnits=outputUnits)
+
             if self.driver_condition_type == 'isentropic-compression-p4':
                 self.p4 = float(cfg['p4'])
 
@@ -1568,6 +1395,7 @@ class Driver(object):
         state4.update_thermo_from_pT()
         state4.update_sound_speed()
 
+
         if 'v4' in cfg:
             # this is the rare cause (for us) of a moving driver, which is basically for a detonation driver
             v4 = float(cfg['v4'])
@@ -1575,10 +1403,45 @@ class Driver(object):
             # we assume that the state 4 driver is stationary
             v4 = 0.0
 
-        # now make the reference state, if it fails (which happens for some of the detonation drive conditions)
-        # we will make a room temperature only object to fix it.
+        # I have had to add some of the room temperature only gas state stuff to here for detonation driver
+        # configurations, as I was having some issues setting the reference gas state with H2/O2/He gas compositions:
 
-        try:
+        if self.driver_gas_model == 'CEAGas' and hasattr(self, 'driver_fill_gas_name') and self.driver_fill_gas_name:
+            fill_gmodel_location = '{0}/cea-{1}-gas-model.lua'.format(preset_gas_models_folder, self.driver_fill_gas_name)
+            # we create this link and then use if it exists...
+            fill_room_temperature_only_gmodel_location = '{0}/cea-{1}-room-temperature-only-gas-model.lua'.format(preset_gas_models_folder, self.driver_fill_gas_name)
+        elif self.driver_gas_model == 'custom' and self.driver_fill_gas_filename:
+            fill_gmodel_location = self.driver_fill_gas_filename
+            # we make it the gas name with -room-temperature-only-gas-model added... (in the same folder)
+            fill_room_temperature_only_gmodel_location = fill_gmodel_location.split('.')[0] + '-room-temperature-only-gas-model.' + fill_gmodel_location.split('.')[-1]
+        else:
+            fill_room_temperature_only_gmodel_location = None
+
+        if fill_room_temperature_only_gmodel_location and os.path.exists(os.path.expandvars(fill_room_temperature_only_gmodel_location)):
+
+            # if there is a room temperature only object we "trick" the fill state gas model to use that when it sets the gas
+            # state and then replace the correct gas state after. This seemed to be the best / cleanest way to do it.
+
+            room_temperature_only_gmodel = GasModel(os.path.expandvars(fill_room_temperature_only_gmodel_location))
+
+            reference_gas_state = GasState(self.gmodel)
+
+            reference_gas_state.gmodel = room_temperature_only_gmodel
+
+            reference_gas_state.p = p_0
+            reference_gas_state.T = T_0
+
+            reference_gas_state.update_thermo_from_pT()
+            reference_gas_state.update_sound_speed()
+
+            reference_gas_state.gmodel = self.gmodel
+
+        else:
+
+            # we don't do anything abnormal...
+
+            room_temperature_only_gmodel = None
+
             # make a reference gas state here...
             reference_gas_state = GasState(self.gmodel)
             reference_gas_state.p = p_0
@@ -1590,32 +1453,7 @@ class Driver(object):
             reference_gas_state.update_thermo_from_pT()
             reference_gas_state.update_sound_speed()
 
-        except Exception as e:
-            print(e)
-
-            if self.driver_gas_model == 'CEAGas':
-                print(
-                    "We failed to set the gas state using the standard gas model, so we will try a room temperature only gas model.")
-
-                reference_gas_state, room_temperature_only_gmodel = \
-                    room_temperature_only_gas_model_gas_state_setter(gas_state=reference_gas_state,
-                                                                     p=p_0, T=T_0,
-                                                                     original_gmodel_location=driver_gmodel_location,
-                                                                     room_temperature_only_gmodel=None)
-
-            else:
-                raise Exception("Drive(): Setting the driver gas reference state failed.")
-
-        if 'room_temperature_only_gmodel' not in locals():
-            room_temperature_only_gmodel = None
-
-        # now make our facility driver objects
-
-        # including state4i if needed...
-        if self.driver_condition_type in ['isentropic-compression-p4', 'isentropic-compression-compression-ratio']:
-            self.state4i = Facility_State('s4i', state4i, v4i, reference_gas_state=reference_gas_state,
-                                          species_MW_dict=species_MW_dict, outputUnits=outputUnits)
-
+        # now make our facility driver object...
         self.state4 = Facility_State('s4', state4, v4,
                                      reference_gas_state=reference_gas_state, room_temperature_only_gmodel = room_temperature_only_gmodel,
                                      outputUnits=outputUnits, species_MW_dict=species_MW_dict)
@@ -2018,7 +1856,7 @@ class Facility_State(object):
     """
 
     def __init__(self, state_name, gas_state, v, reference_gas_state = None, room_temperature_only_gmodel = None,
-                 outputUnits = 'moles', species_MW_dict = None, make_gmodel_without_ions = None):
+                 outputUnits = 'massf', species_MW_dict = None, make_gmodel_without_ions = None):
         """
 
         :param state_name: just a string labelled the state, probably just '4', '3s', '1' etc.
@@ -2875,38 +2713,48 @@ class Tube(object):
         self.fill_state_name = fill_state_name
 
         if self.fill_gas_model == 'CEAGas' and self.fill_gas_name:
-            fill_gmodel_location = f'{preset_gas_models_folder}/cea-{self.fill_gas_name}-gas-model.lua'
+            fill_gmodel_location = '{0}/cea-{1}-gas-model.lua'.format(preset_gas_models_folder, self.fill_gas_name)
+            # we create this link and then use if it exists...
+            fill_room_temperature_only_gmodel_location = '{0}/cea-{1}-room-temperature-only-gas-model.lua'.format(preset_gas_models_folder, self.fill_gas_name)
         elif self.fill_gas_model == 'custom' and self.fill_gas_filename:
             fill_gmodel_location = self.fill_gas_filename
+            # we make it the gas name with -room-temperature-only-gas-model added... (in the same folder)
+            fill_room_temperature_only_gmodel_location = fill_gmodel_location.split('.')[0] + '-room-temperature-only-gas-model.' + fill_gmodel_location.split('.')[-1]
+        else:
+            fill_room_temperature_only_gmodel_location = None
 
         fill_gmodel = GasModel(os.path.expandvars(fill_gmodel_location))
-        fill_state_gas_object = GasState(fill_gmodel)
 
-        try:
+        if fill_room_temperature_only_gmodel_location and os.path.exists(os.path.expandvars(fill_room_temperature_only_gmodel_location)):
+
+            # if there is a room temperature only object we "trick" the fill state gas model to use that when it sets the gas
+            # state and then replace the correct gas state after. This seemed to be the best / cleanest way to do it.
+
+            fill_room_temperature_only_gmodel = GasModel(os.path.expandvars(fill_room_temperature_only_gmodel_location))
+
+            fill_state_gas_object = GasState(fill_gmodel)
+
+            fill_state_gas_object.gmodel = fill_room_temperature_only_gmodel
+
             fill_state_gas_object.p = self.fill_pressure
             fill_state_gas_object.T = self.fill_temperature
 
             fill_state_gas_object.update_thermo_from_pT()
             fill_state_gas_object.update_sound_speed()
 
-        except Exception as e:
-            print(e)
+            fill_state_gas_object.gmodel = fill_gmodel
 
-            if self.fill_gas_model == 'CEAGas':
-                print(
-                    "We failed to set the gas state using the standard gas model, so we will try a room temperature only gas model.")
+        else:
 
-                fill_state_gas_object, room_temperature_only_gmodel = \
-                room_temperature_only_gas_model_gas_state_setter(gas_state = fill_state_gas_object,
-                                                                 p = self.fill_pressure, T = self.fill_temperature,
-                                                                 original_gmodel_location = fill_gmodel_location,
-                                                                 room_temperature_only_gmodel = None)
+            fill_room_temperature_only_gmodel = None
 
-            else:
-                raise Exception("Tube(): Setting the initial gas state in the tube failed.")
+            fill_state_gas_object = GasState(fill_gmodel)
 
-        if 'room_temperature_only_gmodel' not in locals():
-            room_temperature_only_gmodel = None
+            fill_state_gas_object.p = self.fill_pressure
+            fill_state_gas_object.T = self.fill_temperature
+
+            fill_state_gas_object.update_thermo_from_pT()
+            fill_state_gas_object.update_sound_speed()
 
         # fill state isn't moving...
         fill_state_v = 0.0 #m/s
@@ -2914,7 +2762,7 @@ class Tube(object):
         # now make the related facility state object:
         # the fill state can be its own reference state...
         self.fill_state = Facility_State(self.fill_state_name, fill_state_gas_object, fill_state_v,
-                                         reference_gas_state=fill_state_gas_object, room_temperature_only_gmodel = room_temperature_only_gmodel,
+                                         reference_gas_state=fill_state_gas_object, room_temperature_only_gmodel = fill_room_temperature_only_gmodel,
                                          outputUnits = outputUnits, species_MW_dict = species_MW_dict)
 
         self.shocked_fill_state_name = shocked_fill_state_name
@@ -3449,8 +3297,7 @@ class Nozzle(object):
 
     def __init__(self, entrance_state_name, entrance_state, exit_state_name, area_ratio, nozzle_expansion_tolerance,
                  facility_type = None, expansion_tube_nozzle_expansion_minimum_p2_over_p1 = None,
-                 maximum_temp_for_room_temperature_only_gmodel = 1100.0,
-                 cutoff_temp_for_no_ions = 5000.0):
+                 maximum_temp_for_room_temperature_only_gmodel = 1100.0, cutoff_temp_for_no_ions = 5000.0):
         """
 
         :param entrance_state_name:
@@ -3561,9 +3408,6 @@ class Nozzle(object):
             if self.entrance_state.get_room_temperature_only_gmodel() and self.entrance_state.get_gas_state().T < maximum_temp_for_room_temperature_only_gmodel:
                 print(f"Our gas state has a room temperature only gas model and we are below the maximum temperature for using that model of {maximum_temp_for_room_temperature_only_gmodel}.")
                 print('So we are going to try doing the nozzle expansion with that model.')
-
-<<<<<<< HEAD
-                # this can't use the new function I made as it in fact needs two gas states here...
 
                 original_gmodel = supersonic_nozzle_entrance_state.get_gas_state_gmodel()
 

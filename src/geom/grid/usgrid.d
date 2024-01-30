@@ -2209,20 +2209,7 @@ public:
             size_t[] vtx_ids_boundary = getVertexIdsOnBoundaries();
             size_t[] vtx_ids_other_boundary = other.getVertexIdsOnBoundaries();
             //
-<<<<<<< HEAD
             // We want a fast way to look up whether a face is on a boundary
-=======
-            size_t[] vtx_ids_other_boundary;
-            foreach (i,b; other.boundaries) {
-                // For OpenFOAM 2-D meshes the top and bottom boundaries
-                // (index 4 and 5) can be skipped.
-                if (openFoam && dimensions == 2 && (i == 4 || i == 5)) { continue; }
-                foreach (f; b.face_id_list) {
-                    vtx_ids_other_boundary ~= other.faces[f].vtx_id_list;
-                }
-            }
-            vtx_ids_other_boundary = array(vtx_ids_other_boundary.sort().uniq());
->>>>>>> 132027e3 (geom: Optimisations to usgrid.joinGrid for faster working with large 3D grids)
             bool[] other_vtx_is_on_boundary;
             other_vtx_is_on_boundary.length = other.vertices.length;
             foreach(vid; vtx_ids_other_boundary) other_vtx_is_on_boundary[vid] = true;
@@ -2254,11 +2241,7 @@ public:
                 root.fast_nearest(vtxnode, 0, foundNode, bestDist, nVisited);
                 double dist = sqrt(bestDist);
 
-<<<<<<< HEAD
                 if (isClose(dist, 0.0, absTol, relTol)) {
-=======
-                if (dist<absTol) {
->>>>>>> 132027e3 (geom: Optimisations to usgrid.joinGrid for faster working with large 3D grids)
                     found = true;
                     jsave = foundNode.cellid; // Remember where we found it.
                 }

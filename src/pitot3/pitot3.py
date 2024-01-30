@@ -7,15 +7,40 @@ Chris James (c.james4@uq.edu.au) - (01/01/21)
 """
 
 VERSION_STRING = '16-Dec-2023'
+VERSION_STRING = '16-Dec-2023'
 
 import sys, os, math
 import yaml
+
+# some stuff I had to do get NO to load in yaml... from here https://stackoverflow.com/questions/36463531/pyyaml-automatically-converting-certain-keys-to-boolean-values
+
+from yaml.loader import Reader, Scanner, Parser, Composer, SafeConstructor, Resolver
+
+class StrictBoolSafeResolver(Resolver):
+    pass
+
+# remove resolver entries for On/Off/Yes/No
+for ch in "OoYyNn":
+    if len(StrictBoolSafeResolver.yaml_implicit_resolvers[ch]) == 1:
+        del StrictBoolSafeResolver.yaml_implicit_resolvers[ch]
+    else:
+        StrictBoolSafeResolver.yaml_implicit_resolvers[ch] = [x for x in
+                StrictBoolSafeResolver.yaml_implicit_resolvers[ch] if x[0] != 'tag:yaml.org,2002:bool']
+
+class StrictBoolSafeLoader(Reader, Scanner, Parser, Composer, SafeConstructor, StrictBoolSafeResolver):
+    def __init__(self, stream):
+        Reader.__init__(self, stream)
+        Scanner.__init__(self)
+        Parser.__init__(self)
+        Composer.__init__(self)
+        SafeConstructor.__init__(self)
+        StrictBoolSafeResolver.__init__(self)
 
 # I have put functions and classes on different lines here as it was getting too long
 # TO DO: the functions could even be put in a functions file...
 from pitot3_utils.pitot3_classes import Facility, Driver, Diaphragm, Facility_State, Tube, Nozzle, Test_Section
 from pitot3_utils.pitot3_classes import eilmer4_CEAGas_input_file_creator, expansion_tube_test_time_calculator, \
-    state_output_for_final_output, pitot3_results_output, cleanup_function, pitot3_species_MW_dict_loader
+    state_output_for_final_output, pitot3_results_output, cleanup_function
 
 #-----------------------------------------------------------------------------------
 
@@ -78,7 +103,8 @@ def run_pitot3(config_dict = {}, config_filename = None,
 
     # load the species molecular weights file here so we can use it to get mole fractions when needed...
     species_molecular_weights_filename = config_data['species_molecular_weights_file']
-    species_MW_dict = pitot3_species_MW_dict_loader(species_molecular_weights_filename)
+    species_molecular_weights_file = open(os.path.expandvars(species_molecular_weights_filename))
+    species_MW_dict = yaml.load(species_molecular_weights_file, Loader=StrictBoolSafeLoader)
 
     outputUnits = config_data['outputUnits']
 
@@ -574,9 +600,6 @@ def run_pitot3(config_dict = {}, config_filename = None,
         else:
             expansion_tube_nozzle_expansion_minimum_p2_over_p1 = None
 
-        maximum_temp_for_room_temperature_only_gmodel = config_data['maximum_temp_for_room_temperature_only_gmodel']
-        cutoff_temp_for_no_ions = config_data['cutoff_temp_for_no_ions']
-
         nozzle_exit_state_name = config_data['nozzle_exit_state_name']
 
         nozzle = Nozzle(entrance_state_name=gas_path[-1].get_exit_state_name(),
@@ -584,9 +607,7 @@ def run_pitot3(config_dict = {}, config_filename = None,
                         exit_state_name=nozzle_exit_state_name, area_ratio=area_ratio,
                         nozzle_expansion_tolerance=nozzle_expansion_tolerance,
                         facility_type = facility_type,
-                        expansion_tube_nozzle_expansion_minimum_p2_over_p1 = expansion_tube_nozzle_expansion_minimum_p2_over_p1,
-                        maximum_temp_for_room_temperature_only_gmodel = maximum_temp_for_room_temperature_only_gmodel,
-                        cutoff_temp_for_no_ions = cutoff_temp_for_no_ions)
+                        expansion_tube_nozzle_expansion_minimum_p2_over_p1 = expansion_tube_nozzle_expansion_minimum_p2_over_p1)
 
         gas_path.append(nozzle)
         object_dict['nozzle'] = nozzle

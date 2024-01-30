@@ -55,25 +55,20 @@ Matrix!double Gamma;
 Matrix!double Q0;
 Matrix!double Q1;
 
-// To avoid race conditions, there are a couple of locations where
-// each block will put its result for the suggested time-step
-// into the following arrays, then we will reduce across the arrays.
-shared static double[] local_dt_allow;
+@nogc
 double determine_dt(double cfl_value)
 {
     double dt = double.max;
+    double dt_local = double.max;
     bool first = true;
-    foreach (i, sblk; parallel(localSolidBlocks, 1)) {
-        double dt_local = sblk.determine_time_step_size(cfl_value);
+    foreach (sblk; localSolidBlocks) {
+        dt_local = sblk.determine_time_step_size(cfl_value);
         if (first) {
-            local_dt_allow[i] = dt_local;
+            dt = dt_local;
             first = false;
         } else {
-            local_dt_allow[i] = fmin(local_dt_allow[i], dt_local);
+            dt = fmin(dt, dt_local);
         }
-    }
-    foreach (i,sblk; localSolidBlocks) {
-        dt = fmin(dt, local_dt_allow[i]);
     }
     return dt;
 } // end determine_dt
@@ -202,11 +197,7 @@ void integrate_solid_in_time_implicit(double target_time, bool init_precondition
             SimState.step = step;
 
             // implicit solid update
-<<<<<<< HEAD
-            rpcGMRES_solve(step, physicalSimTime, dt, eta, sigma, dual_time_stepping, temporal_order, dt_physical, residual);
-=======
             rpcGMRES_solve(step, physicalSimTime, dt, eta, sigma, dual_time_stepping, temporal_order, dt_physical, normNew, use_preconditioner);
->>>>>>> d654d657 (solid: added more user config parameters for GMRES...)
             foreach (sblk; parallel(localSolidBlocks,1)) {
                 int ftl = to!int(sblk.myConfig.n_flow_time_levels-1);
                 int ftl = to!int(sblk.myConfig.n_flow_time_levels-1);
@@ -397,11 +388,7 @@ foreach (sblk; localSolidBlocks) `~dot~` += sblk.dotAcc;`;
 }
 
 void rpcGMRES_solve(int step, double pseudoSimTime, double dt, double eta, double sigma,
-<<<<<<< HEAD
-                    bool dual_time_stepping, int temporal_order, double dt_physical, bool use_preconditioner)
-=======
                     bool dual_time_stepping, int temporal_order, double dt_physical, ref double residual, bool use_preconditioner)
->>>>>>> d654d657 (solid: added more user config parameters for GMRES...)
 {
 
     int maxIters = GlobalConfig.sdluOptions.maxGMRESIterations;
@@ -823,6 +810,7 @@ void rpcGMRES_solve(int step, double pseudoSimTime, double dt, double eta, doubl
         outFile.writef("%d    %.16e    %d    %d    %.16e    %.16e \n", step, dt, r, iterCount, linSolResid, unscaledNorm2);
         outFile.close();
     }
+    residual = unscaledNorm2;
 }
 
 void verify_jacobian() {

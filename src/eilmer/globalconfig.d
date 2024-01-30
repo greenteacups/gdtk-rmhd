@@ -626,27 +626,6 @@ SolidTimeIntegrationScheme solidTimeIntegrationSchemeFromName(string name)
     }
 }
 
-enum SolidTimeIntegrationScheme { explicit, implicit }
-
-@nogc
-string solidTimeIntegrationSchemeName(SolidTimeIntegrationScheme i)
-{
-    final switch (i) {
-    case SolidTimeIntegrationScheme.explicit: return "explicit";
-    case SolidTimeIntegrationScheme.implicit: return "implicit";
-    }
-}
-
-@nogc
-SolidTimeIntegrationScheme solidTimeIntegrationSchemeFromName(string name)
-{
-    switch (name) {
-    case "explicit": return SolidTimeIntegrationScheme.explicit;
-    case "implicit": return SolidTimeIntegrationScheme.implicit;
-    default: return SolidTimeIntegrationScheme.explicit;
-    }
-}
-
 enum PreconditionMatrixType { diagonal, jacobi, sgs, ilu }
 
 string preconditionMatrixTypeName(PreconditionMatrixType i)
@@ -794,7 +773,6 @@ class IgnitionZone : BlockZone {
 
 struct SolidDomainLooseUpdateOptions {
     int maxNewtonIterations = 10;
-    double NewtonSolveTolerance = 1.0e-2;
     double NewtonSolveTolerance = 1.0e-2;
     int maxGMRESIterations = 10;
     int maxGMRESRestarts = 0;

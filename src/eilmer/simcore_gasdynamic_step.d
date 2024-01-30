@@ -186,14 +186,19 @@ void sts_gasdynamic_explicit_increment_with_fixed_grid()
             // TODO: think about a more appropriate place to calculate the timestep. KAD 2022-11-08
             double cfl_value = GlobalConfig.cfl_schedule.interpolate_value(SimState.time);
             double dt_local = double.max;
+            double dt_local = double.max;
             dt_global = double.max;
             bool first = true;
             foreach (sblk; localSolidBlocks) {
                 dt_local = sblk.determine_time_step_size(cfl_value);
+            foreach (sblk; localSolidBlocks) {
+                dt_local = sblk.determine_time_step_size(cfl_value);
                 if (first) {
+                    dt_global = dt_local;
                     dt_global = dt_local;
                     first = false;
                 } else {
+                    dt_global = fmin(dt_global, dt_local);
                     dt_global = fmin(dt_global, dt_local);
                 }
             }
@@ -890,7 +895,7 @@ void sts_gasdynamic_explicit_increment_with_fixed_grid()
     //
     if (GlobalConfig.coupling_with_solid_domains == SolidDomainCoupling.tight ||
         GlobalConfig.coupling_with_solid_domains == SolidDomainCoupling.steady_fluid_transient_solid) {
-        foreach (sblk; parallel(localSolidBlocks, 1)) {
+        foreach (sblk; localSolidBlocks) {
             if (sblk.active) {
                 foreach (scell; sblk.cells) { scell.e[0] = scell.e[end_indx]; }
             }
@@ -1652,7 +1657,7 @@ void gasdynamic_explicit_increment_with_moving_grid()
         case GridMotion.FSI:
             foreach (FEMModel; FEMModels) {
                 if (SimState.step % FEMModel.myConfig.couplingStep == 0) {
-                    FEMModel.compute_vtx_velocities_for_FSI(SimState.dt_global);
+                    FEMModel.computeVtxVelocitiesForFSI(SimState.dt_global);
                 }
             }
             break;
@@ -2842,7 +2847,7 @@ void gasdynamic_implicit_increment_with_moving_grid()
         case GridMotion.FSI:
             foreach (FEMModel; FEMModels) {
                 if (SimState.step % FEMModel.myConfig.couplingStep == 0) {
-                    FEMModel.compute_vtx_velocities_for_FSI(SimState.dt_global);
+                    FEMModel.computeVtxVelocitiesForFSI(SimState.dt_global);
                 }
             }
             break;
