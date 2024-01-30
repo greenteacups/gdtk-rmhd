@@ -94,7 +94,7 @@ static this()
 /**
  * Read Eilmer program configuration file.
  *
- * Authors: RJG  
+ * Authors: RJG
  * Date: 2022-08-06
  */
 void readLmrConfig()
