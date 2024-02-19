@@ -16,10 +16,10 @@ grid:
 	lmr prep-grid
 
 init:
-	lmr prep-flow --mode=steady
+	lmr prep-sim
 
 run:
-	lmr run-steady
+	lmr run
 
 post: vtk
 

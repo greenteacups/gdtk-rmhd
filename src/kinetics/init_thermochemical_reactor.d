@@ -30,7 +30,8 @@ import gas.vib_specific_nitrogen;
 import gas.vib_specific_co;
 import gas.two_temperature_air;
 import gas.pseudo_species_gas;
-import gas.electronically_specific_gas;
+// RJG, disabled while I figure out the cyclic dependency in static constructors
+// import gas.electronically_specific_gas;
 import gas.two_temperature_gasgiant;
 
 import kinetics.chemistry_update;
@@ -47,7 +48,8 @@ import kinetics.two_temperature_argon_with_ideal_gas;
 import kinetics.vib_specific_nitrogen_kinetics;
 import kinetics.vib_specific_co_kinetics;
 import kinetics.two_temperature_air_kinetics;
-import kinetics.electronically_specific_kinetics;
+// RJG, disabled while I figure out the cyclic dependency in static constructors
+// import kinetics.electronically_specific_kinetics;
 version (with_dvode)
 {
     import kinetics.pseudo_species_kinetics;
@@ -61,12 +63,12 @@ ThermochemicalReactor init_thermochemical_reactor(GasModel gmodel, string fileNa
     Construct a new ThermochemicalReactor object that is appropriate for use with GasModel gmodel.
     Since thermochemical reactors are tied to specific gas models, this routine needs to test
     the actual type of gasmodel that we have, even though OOP normally avoids this.
-    
+
     In d, this can be done in one of two ways:
 
     (cast(ObjectType) object) !is null
 
-    or 
+    or
 
     typeid(object) is typeid(ObjectType)
 
@@ -134,9 +136,12 @@ ThermochemicalReactor init_thermochemical_reactor(GasModel gmodel, string fileNa
     if ((cast(TwoTemperatureAir) gmodel) !is null) {
         reactor = new TwoTemperatureAirKinetics(fileName1, fileName2, gmodel);
     }
+    // RJG, disabled while I figure out the cyclic dependency in static constructors
+    /*
     if ((cast(ElectronicallySpecificGas) gmodel) !is null) {
         reactor = new ElectronicallySpecificKinetics(fileName1, gmodel);
     }
+    */
     version (with_dvode)
     {
         if ((cast(PseudoSpeciesGas) gmodel) !is null) {

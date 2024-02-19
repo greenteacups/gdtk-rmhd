@@ -8,11 +8,13 @@ import core.time;
 import std.format;
 import std.array;
 import std.range;
+import std.file;
 
 import nm.number;
 import nm.bbla;
 import nm.smla;
 import fsi;
+import gzip;
 import geom;
 
 class KirchhoffLovePlate : FEMModel {
@@ -33,22 +35,31 @@ public:
     }
 
     override void GenerateMassStiffnessMatrices() {
-        number a = myConfig.length / (2 * myConfig.Nx);
-        number b = myConfig.width / (2 * myConfig.Nz);
+        // Assign the constants bsaed on the structure geometry
+        double a = myConfig.length / (2 * myConfig.Nx);
+        double b = myConfig.width / (2 * myConfig.Nz);
 
-        Matrix!number KL = LocalStiffnessMatrix(a, b, myConfig.poissonsRatio);
+        // Build the local mass and stiffness matrices- these are constant in both time and across elements,
+        // because our elements are of uniform size.
+        Matrix!double KL = LocalStiffnessMatrix(a, b, myConfig.poissonsRatio);
         KL.scale(myConfig.youngsModulus * pow(myConfig.thickness, 3) * a * b / (12 * (1 - pow(myConfig.poissonsRatio, 2))));
-        Matrix!number ML = LocalMassMatrix(a, b);
+        Matrix!double ML = LocalMassMatrix(a, b);
         ML.scale(myConfig.density * myConfig.thickness * a * b);
 
+        // Assign our indexers
         size_t globalNodeIndx, globalNodeIndxInner, globalRowIndx, globalColIndx, localRowIndx, localColIndx;
+
+        // First, we iterate over all the elements
         foreach (k; 0 .. myConfig.Nz) {
             foreach (i; 0 .. myConfig.Nx) {
+                // Then, we iterate over each node and DoF in the element to build the equation corresponding to that DoF
                 foreach (node; 0 .. 4) {
                     globalNodeIndx = LocalNodeToGlobalNode(node, i, k);
                     foreach (DoF; 0 .. 3) {
                         localRowIndx = node * 3 + DoF;
                         globalRowIndx = globalNodeIndx * 3 + DoF;
+                        // Finally, we do an inner iteration across the DoFs to compute the contributions from each DoF
+                        // to the outer DoF's equation.
                         foreach (n_node; 0 .. 4) {
                             globalNodeIndxInner = LocalNodeToGlobalNode(n_node, i, k);
                             foreach (D_DoF; 0 .. 3) {
@@ -63,6 +74,7 @@ public:
             } // end foreach i
         } // end foreach k
 
+        // Apply the boundary conditions, diagonal ones for fixed nodes.
         foreach (zeroedIndx; zeroedIndices) {
             foreach (DoF; 0 .. nDoF) {
                 if (zeroedIndx == DoF) {
@@ -96,15 +108,14 @@ public:
         }
     } // end LocalNodeToGlobalNode
  
-    Matrix!number LocalStiffnessMatrix(number a, number b, number v) {
+    Matrix!double LocalStiffnessMatrix(double a, double b, double v) {
         // Allocate memory for the local stiffness matrix
-        Matrix!number KL = new Matrix!number(12); KL.zeros();
+        Matrix!double KL = new Matrix!double(12); KL.zeros();
 
         // Build the constituitive matrix as per Eq 5.12 in 
         // "Structural Analysis with the Finite Element Method: Linear Statics, Vol 2"
         // The coefficient E/(1-v^2) is applied later
-
-        Matrix!number D = new Matrix!number(3); D.zeros();
+        Matrix!double D = new Matrix!double(3); D.zeros();
         D[0, 0] = 1; D[0, 1] = v;
         D[1, 0] = v; D[1, 1] = 1;
         D[2, 2] = (1 - v) / 2;
@@ -114,7 +125,7 @@ public:
         double[4] etaQuad = [-1, -1, 1, 1]; etaQuad[] *= (1 / sqrt(3.0));
 
         // Allocate memory for the B matrix, which is evaluated at each quad point
-        Matrix!number B = new Matrix!number(3, 12);
+        Matrix!double B = new Matrix!double(3, 12);
 
         // Iterate through the quadrature points
         foreach (quadPoint; 0 .. 4) {
@@ -159,15 +170,15 @@ public:
             B[2,10] = (3 * xi * xi - 2 * xi - 1) / (4 * b);
             B[2,11] = (-3 * eta * eta - 2 * eta + 1) / (4 * a);
 
-            Matrix!number BDB = dot(dot(transpose(B), D), B);
+            Matrix!double BDB = dot(dot(transpose(B), D), B);
             KL._data[] += BDB._data[];
         } // end foreach xi, eta
         return KL;
     } // LocalStiffnessMatrix
 
-    Matrix!number LocalMassMatrix(number a, number b) {
+    Matrix!double LocalMassMatrix(double a, double b) {
         // Allocate memory for the local mass matrix
-        Matrix!number ML = new Matrix!number(12); ML.zeros();
+        Matrix!double ML = new Matrix!double(12); ML.zeros();
 
         // Here, we only need the shape functions and their first derivatives,
         // so it's easy enough to write out by hand. So we will loop through the nodes,
@@ -180,7 +191,7 @@ public:
         double[4] xiQuad = xn[] * (1 / sqrt(3.0)); double[4] etaQuad = yn[] * (1 / sqrt(3.0));
 
         // Allocate memory for the N matrix
-        Matrix!number N = new Matrix!number(3, 12);
+        Matrix!double N = new Matrix!double(3, 12);
 
         // Iterate through quadrature points
         foreach (quadPoint; 0 .. 4) {
@@ -207,9 +218,9 @@ public:
     override void UpdateForceVector() {
         // Update the external forcing vector using the fluid pressures at the quadrature
         // locations
-        number a = myConfig.length / (2 * myConfig.Nx);
-        number b = myConfig.width / (2 * myConfig.Nz);
-        number[12] FL;
+        double a = myConfig.length / (2 * myConfig.Nx);
+        double b = myConfig.width / (2 * myConfig.Nz);
+        double[12] FL;
 
         // We need to evaluate Eq. 5.46 in 
         // "Structural Analysis with the Finite Element Method: Linear Statics, Vol 2"
@@ -227,7 +238,7 @@ public:
 
         // Iterate through the elements
         size_t globalNodeIndx, globalQuadId;
-        number externalForce;
+        double externalForce;
         foreach (k; 0 .. myConfig.Nz) {
             foreach (i; 0 .. myConfig.Nx) {
                 // Iterate through nodes on the element to build the local force matrix
@@ -254,17 +265,17 @@ public:
                 // Add to the global force matrix
                 foreach (node; 0 .. 4) {
                     globalNodeIndx = LocalNodeToGlobalNode(node, i, k);
-                    F._data[3 * globalNodeIndx .. 3 * globalNodeIndx + 3] += FL[3 * node .. 3 * node + 3];
+                    F[3 * globalNodeIndx .. 3 * globalNodeIndx + 3] += FL[3 * node .. 3 * node + 3];
                 } // end foreach node
             } // end foreach i
         } // end foreach k
 
         // Scale the vector by a * b
-        F._data[] *= a * b;
+        F[] *= a * b;
 
         // Set the boundary conditions
         foreach (zeroedIndx; zeroedIndices) {
-            F._data[zeroedIndx] = 0.0;
+            F[zeroedIndx] = 0.0;
         }
     }
 
@@ -402,26 +413,47 @@ public:
         }
     } // end determineBoundaryConditions
 
-    override void WriteToFile(size_t tindx) {
-        auto writeFile = File(format("FSI/t%04d.dat", tindx), "w+");
+    override void WriteFSIToFile(size_t tindx) {
+        // Initialise the gzipped writer
+        auto outfile = new GzipOut(format("FSI/t%04d.gz", tindx));
+        auto writer = appender!string();
+
         // Set the header to describe the columns (w = displacement, theta_x = x slope, theta_z = z slope)
-        writeFile.write("# w theta_x theta_z dxdt dtheta_xdt dtheta_zdt\n");
+        formattedWrite(writer, "# w theta_x theta_z dxdt dtheta_xdt dtheta_zdt\n");
         // Write the position and velocities for each DoF
         foreach (node; 0 .. (myConfig.Nx + 1) * (myConfig.Nz + 1)) {
-            writeFile.write(format("%.18e %1.8e %1.8e %1.8e %1.8e %1.8e\n", X[node*3].re, X[node*3+1], X[node*3+2].re, V[node*3].re, V[node*3+1].re, V[node*3+2].re));
+            formattedWrite(writer, "%.18e %1.8e %1.8e %1.8e %1.8e %1.8e\n", X[node*3].re, X[node*3+1], X[node*3+2].re, V[node*3].re, V[node*3+1].re, V[node*3+2].re);
         }
-    } // end writeToFile
+        outfile.compress(writer.data);
+        outfile.finish();
+    } // end WriteFSIToFile
 
-    override void ReadFromFile(size_t tindx) {
-        auto readFile = File(format("FSI/t%04d.dat", tindx), "r").byLine();
+    override void ReadFSIFromFile(size_t tindx) {
+        // Open the Gzip reader
+        auto readFileByLine = new GzipByLine(format("FSI/t%04d.gz", tindx));
+
         // Pop the header line
-        readFile.popFront();
+        readFileByLine.popFront();
         double[6] line;
         // Take out each line and put into the relevant locations in X, V
         foreach (node; 0 .. (myConfig.Nx + 1) * (myConfig.Nz + 1)) {
-            line = map!(to!double)(splitter(readFile.front())).array; readFile.popFront();
-            X[node*3 .. (node+1)*3] = to!(number[3])(line[0 .. 3]);
-            V[node*3 .. (node+1)*3] = to!(number[3])(line[3 .. 6]);
+            line = map!(to!double)(splitter(readFileByLine.front())).array; readFileByLine.popFront();
+            X[node*3 .. (node+1)*3] = to!(double[3])(line[0 .. 3]);
+            V[node*3 .. (node+1)*3] = to!(double[3])(line[3 .. 6]);
         }
-    } // end readFromFile
+    } // end ReadFSIFromFile
+
+    override string GetHistoryHeader() {
+        // Get the history header string- should look basically the same as the writer header,
+        // with the inclusion of t in the first slot
+        return "# t w theta_x theta_z dwdt dtheta_xdt dtheta_zdt\n";
+    } // end GetHistoryHeader
+
+    override void WriteFSIToHistory(double t) {
+        // Write the node ODE solutions to history file
+
+        foreach (node; myConfig.historyNodes) {
+            append(format("FSI/hist/%04d.dat", node), format("%1.18e %1.18e %1.18e %1.18e %1.18e %1.18e %1.18e\n", t, X[node * 3], X[node * 3 + 1], X[node * 3 + 2], V[node * 3], V[node * 3 + 1], V[node * 3 + 2]));
+        }
+    } // end WriteFSIToHistory
 }

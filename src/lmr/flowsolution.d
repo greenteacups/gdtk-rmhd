@@ -40,8 +40,6 @@ import globalconfig;
 import json_helper;
 import flowstate;
 import vtk_writer;
-import fluidblockio_old;
-import fluidblockio;
 import lmrconfig;
 import blockio;
 
@@ -93,7 +91,6 @@ public:
         }
         string flowFmt = jsonData["flow_format"].str;
 	string gridFmt = jsonData["grid_format"].str;
-        writefln("flowFmt= %s   gridFmt= %s", flowFmt, gridFmt);
         // -- end initialising from JSONData
 
 	// Find out variables from metadata file
@@ -237,17 +234,18 @@ public:
         // The counter argument is that having the cell centre position available in
         // the solution file has been handy, over time.
         // PJ, 2016-11-13
+        bool withZpos = canFind(flowBlocks[0].variableNames, "pos.z");
         size_t[] nearest = [0, 0]; // blk_id, i
         double dx = x - flowBlocks[0]["pos.x", 0];
         double dy = y - flowBlocks[0]["pos.y", 0];
-        double dz = z - flowBlocks[0]["pos.z", 0];
+        double dz = (withZpos) ? (z - flowBlocks[0]["pos.z", 0]) : 0.0;
         double minDist = sqrt(dx*dx + dy*dy + dz*dz);
         foreach (ib; 0 .. nBlocks) {
             auto flow = flowBlocks[ib];
             foreach (i; 0 .. flow.ncells) {
                 dx = x - flowBlocks[ib]["pos.x", i];
                 dy = y - flowBlocks[ib]["pos.y", i];
-                dz = z - flowBlocks[ib]["pos.z", i];
+                dz = (withZpos) ? (z - flowBlocks[ib]["pos.z", i]) : 0.0;
                 double dist = sqrt(dx*dx + dy*dy + dz*dz);
                 if (dist < minDist) {
                     minDist = dist; nearest[0] = ib; nearest[1] = i;

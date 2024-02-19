@@ -6,11 +6,12 @@ import lmrconfig;
 import command;
 import checkjacobian;
 import computenorms;
+import probeflow;
 import limiter2vtk;
 import prepgrids;
-import prepflow;
+import prepsim;
 import prepmappedcells;
-import runsteady;
+import runsim;
 import snapshot2vtk;
 import structured2unstructured;
 import revisionid;
@@ -45,14 +46,15 @@ Show help for a given Eilmer command or topic.
     // Try to add commands in alphabetical order from here down.
     // 1. Add user commands
     commands["compute-norms"] = compNormsCmd;
+    commands["probe-flow"] = probeFlowCmd;
     commands["limiter2vtk"] = limiter2vtkCmd;
     commands["prep-grids"] = prepGridCmd;
-    // add alias from prep-grids
-    commands["prep-grid"] = commands["prep-grids"];
-    commands["prep-flow"] = prepFlowCmd;
+    commands["prep-grid"] = commands["prep-grids"]; // alias for prep-grids
+    commands["prep-sim"] = prepSimCmd;
+    commands["prep-flow"] = commands["prep-sim"]; // alias for prep-sim
     commands["prep-mapped-cells"] = prepMappedCellsCmd;
     commands["revision-id"] = revisionIdCmd;
-    commands["run-steady"] = runSteadyCmd;
+    commands["run"] = runCmd;
     commands["snapshot2vtk"] = snapshot2vtkCmd;
     commands["structured2unstructured"] = structured2unstructuredCmd;
     // add alias for structured2unstructured
@@ -66,12 +68,20 @@ void main(string[] args)
     bool helpWanted = false;
     bool versionWanted = false;
     bool versionLongWanted = false;
+    NumberType numberType;
     getopt(args,
            std.getopt.config.stopOnFirstNonOption,
            "h|help", &helpWanted,
            "v|version", &versionWanted,
            "version-long", &versionLongWanted,
+           "number-type", &numberType
     );
+
+    if (args.length < 2) {
+        // Nothing asked for. Print help and exit.
+        printHelp(args);
+        return;
+    }
 
     if (versionLongWanted) {
         printVersion(false);
@@ -83,12 +93,6 @@ void main(string[] args)
     }
     if (helpWanted) printHelp(args);
 
-    if (args.length < 2) {
-        // Nothing asked for. Print help and exit.
-        printHelp(args);
-        return;
-    }
-
     // Special cases for version options written as commands.
     if (args[1] == "version-long") {
         printVersion(false);
@@ -99,7 +103,17 @@ void main(string[] args)
         return;
     }
 
+    if (args[1].startsWith("--number-type")) {
+        args.remove(1);
+    }
+
     auto cmd = args[1];
+
+    if (cmd == "run") {
+        // We need to treat this one specially because of how delegation
+        // is made based on number type (real or complex)
+        return runsim.delegateAndExecute(args, numberType);
+    }
 
     if (cmd in commands) {
         return (*commands[cmd].main)(args);
@@ -119,18 +133,18 @@ void listHelpForAllCommands()
     writeln("Available commands");
     foreach (cmd; cmds) {
         if (commands[cmd].type == LmrCmdType.user)
-            writefln("   %-20s %s", cmd, commands[cmd].shortDescription);
+            writefln("   %-24s %s", cmd, commands[cmd].shortDescription);
     }
     writeln("");
     writeln("Developer/diagnostics commands");
     foreach (cmd; cmds) {
         if (commands[cmd].type == LmrCmdType.dev)
-            writefln("   %-20s %s", cmd, commands[cmd].shortDescription);
+            writefln("   %-24s %s", cmd, commands[cmd].shortDescription);
     }
     writeln("");
     writeln("Meta commands");
-    writefln("   %-20s Print condensed version information about lmr program.", "version");
-    writefln("   %-20s Print full version information about lmr program.", "version-long");
+    writefln("   %-24s Print condensed version information about lmr program.", "version");
+    writefln("   %-24s Print full version information about lmr program.", "version-long");
 }
 
 void printHelp(string[] args)
@@ -152,8 +166,9 @@ void printHelp(string[] args)
     }
     // else just print general help
     string generalHelp =
-`usage: lmr [-h | --help] [help -a] 
+`usage: lmr [-h | --help] [help -a]
            [-v | --version] [--version-long]
+           [--number-type=real_values|complex_values]
             <command> [<args>]
 
 == Eilmer simulation program ==
@@ -162,14 +177,19 @@ List of commonly used commands:
 
 at preparation stage
    prep-grids      build grids for simulation
-   prep-flow       build initial flow field for simulation
+   prep-sim        build initial flow field for simulation
 
 at simulation stage
-   run-steady      run steady-state solver
-   ...
+   run             run flow solver
 
 at post-processing stage
    snapshot2vtk    convert a snapshot to VTK format for visualisation
+   probe-flow      reports the flow-field data at specified location(s)
+
+== Notes ==
+--number-type option, if used, must appear before "run" command.
+It is advanced usage to control delegation of "run" to lmr-run
+(which uses real numbers) or lmrZ-run (which uses complex numbers).
 
 `;
     write(generalHelp);
