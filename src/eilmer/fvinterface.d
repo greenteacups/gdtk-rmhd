@@ -964,25 +964,23 @@ public:
         if(sigma < 10.0) {sigma = 10.0;}
         if(sigma > 1.0e4) {sigma = 1.0e4;}
 
-        //For testing constant conductivities
         number mu0 = 4 * std.math.PI * 1e-7;    // Permeability of free space
 
-        //number L = 0.4; // Characterisitc length scale
-        //number Rem = 1.0;
-        //number u0 = sqrt(fs.vel.x^^2 + fs.vel.y^^2);
-        sigma = 400; //Rem/(mu0*u0*L);
-        if(pos.y < 0.0){sigma = 1.0;}
-        //if(sigma < 1.0) {sigma = 1.0;}
+        // Cell-based conductivity scaling for constant magnetic Reynolds number
+        number L = 1.0; // Characterisitc length scale
+        number Rem = 1.0; // Magnetic Reynolds Number
+        number u0 = sqrt(fs.vel.x^^2 + fs.vel.y^^2); // Velocity
+        // sigma = Rem/(mu0*u0*L);
 
         // Calculate Diffusive Flux Terms:
-        number eta = 1/(mu0*sigma);     // Diffusivity
+        number eta = 1; //1/(sigma*mu0);     // Diffusivity
 
         number dBxdx = grad.B[0][0] ;
         number dBxdy = grad.B[0][1] ;
         number dBydx = grad.B[1][0] ;
         number dBydy = grad.B[1][1] ;
 
-        // Brin Test Case Boundary Condition - Ideal conducting walls
+        // Temporary Brin Test Case Boundary Condition - Ideal conducting walls
         //if(pos.y > 6.35 || pos.y < -6.35) {dBxdy = 0.0; fs.B.y = 0.0;}
 
         // Calculate diffusion terms
@@ -991,15 +989,10 @@ public:
         number ediffusion = eta * (fs.B.y*(dBydx - dBxdy)*n.x -  fs.B.x*(dBydx - dBxdy)*n.y);
 
         auto cqi = myConfig.cqi;
-        if (SimState.time > 0.0e-4) { // Temporary time - for scaling and rmhd delay
-            F[cqi.xB] -= Bxdiffusion;
-            F[cqi.yB] -= Bydiffusion;
-            //F[cqi.totEnergy] -= ediffusion;
-        }
-        else {
-            F[cqi.xB] = 0.0;
-            F[cqi.yB] = 0.0;
-        }
+        F[cqi.xB] -= Bxdiffusion;
+        F[cqi.yB] -= Bydiffusion;
+
+        F[cqi.totEnergy] -= ediffusion;
     }
 
 
