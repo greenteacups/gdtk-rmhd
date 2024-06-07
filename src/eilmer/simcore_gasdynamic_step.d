@@ -185,19 +185,17 @@ void sts_gasdynamic_explicit_increment_with_fixed_grid()
             // We determine the allowable timestep here to overwrite the timestep calculated for the fluid domain
             // TODO: think about a more appropriate place to calculate the timestep. KAD 2022-11-08
             double cfl_value = GlobalConfig.cfl_schedule.interpolate_value(SimState.time);
+            double dt_local = double.max;
             dt_global = double.max;
             bool first = true;
-            foreach (i, sblk; parallel(localSolidBlocks, 1)) {
-                double dt_local = sblk.determine_time_step_size(cfl_value);
+            foreach (sblk; localSolidBlocks) {
+                dt_local = sblk.determine_time_step_size(cfl_value);
                 if (first) {
-                    local_dt_allow[i] = dt_local;
+                    dt_global = dt_local;
                     first = false;
                 } else {
-                    local_dt_allow[i] = fmin(local_dt_allow[i], dt_local);
+                    dt_global = fmin(dt_global, dt_local);
                 }
-            }
-            foreach (i,sblk; localSolidBlocks) {
-                dt_global = fmin(dt_global, local_dt_allow[i]);
             }
             version(mpi_parallel) {
                 MPI_Allreduce(MPI_IN_PLACE, &dt_global, 1, MPI_DOUBLE, MPI_MIN, MPI_COMM_WORLD);
@@ -997,10 +995,10 @@ void gasdynamic_explicit_increment_with_fixed_grid()
                 SimState.dt_global = SimState.dt_global * 0.2;
                 break;
             }
-            // Phase 02 (maybe) MPI
-            // We are relying on exchanging boundary data as a pre-reconstruction activity.
-            exchange_ghost_cell_boundary_data(SimState.time, gtl, ftl);
-            exchange_ghost_cell_gas_solid_boundary_data();
+            //// Phase 02 (maybe) MPI
+            //// We are relying on exchanging boundary data as a pre-reconstruction activity.
+            //exchange_ghost_cell_boundary_data(SimState.time, gtl, ftl);
+            //exchange_ghost_cell_gas_solid_boundary_data();
             // Phase 03 LOCAL
             try {
                 if (GlobalConfig.apply_bcs_in_parallel) {
@@ -1027,6 +1025,12 @@ void gasdynamic_explicit_increment_with_fixed_grid()
                 SimState.dt_global = SimState.dt_global * 0.2;
                 break;
             }
+
+            // Phase 02 (maybe) MPI - Moved to below 03 to prevent internal_copy over_writing full_face_copy
+            // We are relying on exchanging boundary data as a pre-reconstruction activity.
+            exchange_ghost_cell_boundary_data(SimState.time, gtl, ftl);
+            exchange_ghost_cell_gas_solid_boundary_data();
+
             // Phase 04 MPI
             // We've put this detector step here because it needs the ghost-cell data
             // to be current, as it should be just after a call to apply_convective_bc().
@@ -2489,15 +2493,15 @@ void gasdynamic_implicit_increment_with_fixed_grid()
                 }
             }
         }
-        // Phase 02 (maybe) MPI
-        exchange_ghost_cell_boundary_data(SimState.time, gtl0, ftl0);
-        exchange_ghost_cell_gas_solid_boundary_data();
-        if (allow_high_order_interpolation && (GlobalConfig.interpolation_order > 1)) {
-            exchange_ghost_cell_boundary_convective_gradient_data(SimState.time, gtl0, ftl0);
-        }
-        if (GlobalConfig.viscous) {
-            exchange_ghost_cell_boundary_viscous_gradient_data(SimState.time, to!int(gtl0), to!int(ftl0));
-        }
+        // // Phase 02 (maybe) MPI
+        // exchange_ghost_cell_boundary_data(SimState.time, gtl0, ftl0);
+        // exchange_ghost_cell_gas_solid_boundary_data();
+        // if (allow_high_order_interpolation && (GlobalConfig.interpolation_order > 1)) {
+        //     exchange_ghost_cell_boundary_convective_gradient_data(SimState.time, gtl0, ftl0);
+        // }
+        // if (GlobalConfig.viscous) {
+        //     exchange_ghost_cell_boundary_viscous_gradient_data(SimState.time, to!int(gtl0), to!int(ftl0));
+        // }
 
         // Phase 03 LOCAL
         try {
@@ -2522,6 +2526,17 @@ void gasdynamic_implicit_increment_with_fixed_grid()
             SimState.dt_global = SimState.dt_global * 0.2;
             continue;
         }
+
+        // Moving Phase 02 below Phase 03 to prevent internal_copy overwriting full_face_copy
+        exchange_ghost_cell_boundary_data(SimState.time, gtl0, ftl0);
+        exchange_ghost_cell_gas_solid_boundary_data();
+        if (allow_high_order_interpolation && (GlobalConfig.interpolation_order > 1)) {
+            exchange_ghost_cell_boundary_convective_gradient_data(SimState.time, gtl0, ftl0);
+        }
+        if (GlobalConfig.viscous) {
+            exchange_ghost_cell_boundary_viscous_gradient_data(SimState.time, to!int(gtl0), to!int(ftl0));
+        }
+
         // Phase 04 MPI
         // We've put this detector step here because it needs the ghost-cell data
         // to be current, as it should be just after a call to apply_convective_bc().
