@@ -887,6 +887,10 @@ public:
 	    L2_residual += fabs(cell.dUdt[0][cqi.yMom])^^2;
 	    if (cqi.threeD) { L2_residual += fabs(cell.dUdt[0][cqi.zMom])^^2; }
 	    L2_residual += fabs(cell.dUdt[0][cqi.totEnergy])^^2;
+	    version(MHD) {
+            L2_residual += fabs(cell.dUdt[0][cqi.xB])^^2;
+            L2_residual += fabs(cell.dUdt[0][cqi.yB])^^2;
+	    }
 	    version(turbulence) {
                 foreach(it; 0 .. myConfig.turb_model.nturb){
                     L2_residual += fabs(cell.dUdt[0][cqi.rhoturb+it])^^2;

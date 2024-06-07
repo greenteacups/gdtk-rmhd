@@ -95,7 +95,7 @@ int init_simulation(int tindx, int nextLoadsIndx,
             // Label columns of residuals for reference by gnuplot.
             if (tindx==0)
             std.file.write(residualsFile, "step time wall-clock mass x-mom y-mom"~
-                           " z-mom energy L2 mass-balance\n");
+                           " z-mom energy x-B y-B L2 mass-balance\n");
         } catch (Exception e) {
             // do nothing
         }
@@ -1212,13 +1212,15 @@ int integrate_in_time(double target_time_as_requested)
                     L2_residual = sqrt(L2_residual);
                     if (GlobalConfig.is_master_task) {
                         string residualsFile = "config/"~GlobalConfig.base_file_name~"-residuals.txt";
-                        string txt = format("%7d %10.6e %10.6e %10.6e %10.6e %10.6e %10.6e %10.6e %10.6e %10.6e\n",
+                        string txt = format("%7d %10.6e %10.6e %10.6e %10.6e %10.6e %10.6e %10.6e %10.6e %10.6e %10.6e %10.6e\n",
                                             SimState.step, SimState.time, wall_clock_elapsed,
                                             Linf_residuals[cqi.mass].re,
                                             Linf_residuals[cqi.xMom].re,
                                             Linf_residuals[cqi.yMom].re,
                                             (cqi.threeD) ? Linf_residuals[cqi.zMom].re : 0.0,
                                             Linf_residuals[cqi.totEnergy].re,
+                                            Linf_residuals[cqi.xB].re,
+                                            Linf_residuals[cqi.yB].re,
                                             fabs(L2_residual.re), fabs(mass_balance.re));
                         std.file.append(residualsFile, txt);
                     }
