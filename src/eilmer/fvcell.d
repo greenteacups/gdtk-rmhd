@@ -843,7 +843,6 @@ public:
             // Conserved quantities are stored per-unit-volume.
             my_dUdt[j] = vol_inv * surface_integral + Q[j];
         }
-        if(pos[0].y < 0.006) {my_dUdt[cqi.xB] = 0.0; my_dUdt[cqi.yB] = 0.0;}
         if (cqi.MHD && myConfig.MHD_static_field) {
             // We do not want the internal update to happen for the magnetic field.
             my_dUdt[cqi.xB] = 0.0;
@@ -1511,6 +1510,26 @@ public:
                 grad.turb[i][0] = Rmatrix[0] * old_x + Rmatrix[1] * old_y + Rmatrix[2] * old_z;
                 grad.turb[i][1] = Rmatrix[3] * old_x + Rmatrix[4] * old_y + Rmatrix[5] * old_z;
                 grad.turb[i][2] = Rmatrix[6] * old_x + Rmatrix[7] * old_y + Rmatrix[8] * old_z;
+            }
+        }
+
+        version(MHD) {
+            // Perform the T*A operation
+            foreach (i; 0 .. 3) {
+                old_x = grad.B[i][0]; old_y = grad.B[i][1]; old_z = grad.B[i][2];
+
+                grad.B[i][0] = Rmatrix[0] * old_x + Rmatrix[1] * old_y + Rmatrix[2] * old_z;
+                grad.B[i][1] = Rmatrix[3] * old_x + Rmatrix[4] * old_y + Rmatrix[5] * old_z;
+                grad.B[i][2] = Rmatrix[6] * old_x + Rmatrix[7] * old_y + Rmatrix[8] * old_z;
+            }
+
+            // Now apply the *inv(T)
+            foreach (i; 0 .. 3) {
+                old_x = grad.B[0][i]; old_y = grad.B[1][i]; old_z = grad.B[2][i];
+
+                grad.B[0][i] = Rmatrix[0] * old_x + Rmatrix[1] * old_y + Rmatrix[2] * old_z;
+                grad.B[1][i] = Rmatrix[3] * old_x + Rmatrix[4] * old_y + Rmatrix[5] * old_z;
+                grad.B[2][i] = Rmatrix[6] * old_x + Rmatrix[7] * old_y + Rmatrix[8] * old_z;
             }
         }
     }

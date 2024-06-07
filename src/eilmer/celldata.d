@@ -850,6 +850,18 @@ mixin(GenGradArrayAccess!("AccessConvectiveDTurbDY", "gradients.turb", "1"));
 mixin(GenGradArrayAccess!("AccessConvectiveDTurbDZ", "gradients.turb", "2"));
 }
 
+version(MHD) {
+mixin(GenCellVariableAccess!("AccessConvectiveDBxDX", "gradients.Bx[0]"));
+mixin(GenCellVariableAccess!("AccessConvectiveDBxDY", "gradients.Bx[1]"));
+mixin(GenCellVariableAccess!("AccessConvectiveDBxDZ", "gradients.Bx[2]"));
+mixin(GenCellVariableAccess!("AccessConvectiveDByDX", "gradients.By[0]"));
+mixin(GenCellVariableAccess!("AccessConvectiveDByDY", "gradients.By[1]"));
+mixin(GenCellVariableAccess!("AccessConvectiveDByDZ", "gradients.By[2]"));
+mixin(GenCellVariableAccess!("AccessConvectiveDBzDX", "gradients.Bz[0]"));
+mixin(GenCellVariableAccess!("AccessConvectiveDBzDY", "gradients.Bz[1]"));
+mixin(GenCellVariableAccess!("AccessConvectiveDBzDZ", "gradients.Bz[2]"));
+}
+
 class CellConvectiveGradientData : AuxCellData
 // An empty auxiliary data item that acts as a pass-through for accessing
 // the viscous flow gradients
@@ -928,6 +940,21 @@ class CellConvectiveGradientData : AuxCellData
         }
         }
 
+        version(MHD) {
+        acc["dBx_dx"] = new AccessConvectiveDBxDX();
+        acc["dBx_dy"] = new AccessConvectiveDBxDY();
+        acc["dBy_dx"] = new AccessConvectiveDByDX();
+        acc["dBy_dy"] = new AccessConvectiveDByDY();
+
+        if (myConfig.dimensions == 3) {
+            acc["dBx_dz"] = new AccessConvectiveDBxDZ();
+            acc["dBy_dz"] = new AccessConvectiveDByDZ();
+            acc["dBz_dx"] = new AccessConvectiveDBzDX();
+            acc["dBz_dy"] = new AccessConvectiveDBzDY();
+            acc["dBz_dz"] = new AccessConvectiveDBzDZ();
+        }
+        }
+
         return acc;
     }
 }
@@ -966,6 +993,18 @@ version(turbulence) {
 mixin(GenGradArrayAccess!("AccessDTurbDX", "grad.turb", "0"));
 mixin(GenGradArrayAccess!("AccessDTurbDY", "grad.turb", "1"));
 mixin(GenGradArrayAccess!("AccessDTurbDZ", "grad.turb", "2"));
+}
+
+version(MHD) {
+mixin(GenCellVariableAccess!("AccessDBxDX", "grad.B[0][0]"));
+mixin(GenCellVariableAccess!("AccessDBxDY", "grad.B[0][1]"));
+mixin(GenCellVariableAccess!("AccessDBxDZ", "grad.B[0][2]"));
+mixin(GenCellVariableAccess!("AccessDByDX", "grad.B[1][0]"));
+mixin(GenCellVariableAccess!("AccessDByDY", "grad.B[1][1]"));
+mixin(GenCellVariableAccess!("AccessDByDZ", "grad.B[1][2]"));
+mixin(GenCellVariableAccess!("AccessDBzDX", "grad.B[2][0]"));
+mixin(GenCellVariableAccess!("AccessDBzDY", "grad.B[2][1]"));
+mixin(GenCellVariableAccess!("AccessDBzDZ", "grad.B[2][2]"));
 }
 
 class CellViscousGradientData : AuxCellData
@@ -1026,6 +1065,21 @@ class CellViscousGradientData : AuxCellData
             acc["d"~myConfig.turb_model.primitive_variable_name(it)~"_dx"] = new AccessDTurbDX(it);
             acc["d"~myConfig.turb_model.primitive_variable_name(it)~"_dy"] = new AccessDTurbDY(it);
             if (myConfig.dimensions == 3) acc["d"~myConfig.turb_model.primitive_variable_name(it)~"_dz"] = new AccessDTurbDZ(it);
+        }
+        }
+
+        version(MHD) {
+        acc["dBx_dx"] = new AccessDBxDX();
+        acc["dBx_dy"] = new AccessDBxDY();
+        acc["dBy_dx"] = new AccessDByDX();
+        acc["dBy_dy"] = new AccessDByDY();
+
+        if (myConfig.dimensions == 3) {
+            acc["dBx_dz"] = new AccessDBxDZ();
+            acc["dBy_dz"] = new AccessDByDZ();
+            acc["dBz_dx"] = new AccessDBzDX();
+            acc["dBz_dy"] = new AccessDBzDY();
+            acc["dBz_dz"] = new AccessDBzDZ();
         }
         }
 
@@ -1190,6 +1244,12 @@ version(turbulence) {
     mixin(GenCellArrayVariableAccess!("AccessTurbPhi", "gradients.turbPhi"));
 }
 
+version(MHD) {
+    mixin(GenCellVariableAccess!("AccessBxPhi", "gradients.BxPhi"));
+    mixin(GenCellVariableAccess!("AccessByPhi", "gradients.ByPhi"));
+    mixin(GenCellVariableAccess!("AccessBzPhi", "gradients.BzPhi"));
+}
+
 class CellLimiterData : AuxCellData
 // An empty auxiliary data item that acts as a pass-through for accessing
 // the unstructured grid limiters
@@ -1232,6 +1292,11 @@ class CellLimiterData : AuxCellData
             foreach(it; 0 .. myConfig.turb_model.nturb) {
                 acc["phi_"~myConfig.turb_model.primitive_variable_name(it)] = new AccessTurbPhi(it);
             }
+        }
+        version(MHD) {
+            acc["phi_Bx"] = new AccessBxPhi();
+            acc["phi_By"] = new AccessByPhi();
+            if (myConfig.dimensions == 3) { acc["phi_Bz"] = new AccessBzPhi(); }
         }
 
         return acc;
