@@ -1986,6 +1986,7 @@ public:
             c.add_thermochemical_source_vector(thermochem_source, reaction_fraction);
         }
         if (myConfig.udf_source_terms) { c.add_udf_source_vector(); }
+        if (myConfig.MHD && myConfig.MHD_static_field) {c.add_MHD_Lorentz_force();}
         c.time_derivatives(gtl, ftl);
     } // end evalRU()
 
