@@ -10,11 +10,15 @@ module cmdhelper;
 
 import std.stdio;
 import std.file;
+import std.string;
 import std.format : format;
 import std.algorithm;
-import std.array;
+import std.range : array;
 import std.regex;
 import std.path;
+import std.conv : to;
+
+import dyaml;
 
 import lmrconfig : lmrCfg;
 
@@ -53,7 +57,7 @@ string[] determineAvailableSnapshots(string dir="")
  * Date: 2023-07-14
  */
 
-auto determineSnapshotsToProcess(string[] availSnapshots, int[] snapshots,
+string[] determineSnapshotsToProcess(string[] availSnapshots, int[] snapshots,
     bool allSnapshots, bool finalSnapshot)
 {
     string[] snaps;
@@ -71,7 +75,62 @@ auto determineSnapshotsToProcess(string[] availSnapshots, int[] snapshots,
                              // so do the final snapshot.
         snaps ~= availSnapshots[$-1];
     }
-    return uniq(sort(snaps));
+    return uniq(sort(snaps)).array;
 }
 
+/**
+ * Find timesteps associated with snapshots from times file.
+ *
+ * Author: Rowan J. Gollan
+ * Date: 2024-02-24
+ */
+auto mapTimesToSnapshots(string[] snaps)
+{
+    double[] times;
+    if (snaps.length == 1 && snaps[0] == format(lmrCfg.snapshotIdxFmt, 0)) {
+        // This means we only have an initial snapshot
+        // and no times file yet.
+        times ~= 0.0;
+        return times;
+    }
+    Node timesData = dyaml.Loader.fromFile(lmrCfg.timesFile).load();
+    foreach (snap; snaps) {
+        Node snapData = timesData[snap];
+        times ~= snapData["time"].as!double;
+    }
+    return times;
+}
 
+/**
+ * For structured block processing, decode user-supplied range indices.
+ *
+ * Author: PAJ
+ * Date: 2024-05-22 (moved into this module)
+ */
+size_t[] decode_range_indices(string rangeStr, size_t first, size_t endplus1)
+// Decode strings such as "0:$", ":", "0:3", "$"
+// On input, first and endplus1 represent the largest, available range.
+// Return the pair of numbers that can be used in a foreach loop range.
+{
+    if (rangeStr == ":") {
+        return [first, endplus1];
+    }
+    if (canFind(rangeStr, ":")) {
+        // We have a range specification to pull apart.
+        auto items = rangeStr.split(":");
+        first = to!size_t(items[0]);
+        if (items.length > 1 && items[1] != "$") {
+            // Presume that we have a second integer.
+            size_t new_endplus1 = to!size_t(items[1]);
+            if (new_endplus1 < endplus1) endplus1 = new_endplus1;
+        }
+    } else if (rangeStr == "$") {
+        // With just a single "$" specified, we want only the last index.
+        first = endplus1 - 1;
+    }else {
+        // Presume that we have a single integer.
+        first = to!size_t(rangeStr);
+        if (first < endplus1) endplus1 = first+1;
+    }
+    return [first, endplus1];
+} // end decode_range_indices()

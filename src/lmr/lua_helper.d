@@ -20,10 +20,12 @@ import nm.number;
 import geom.luawrap;
 import gas;
 import gas.luagas_model;
+// import kinetics;
+import kinetics.luaequilibrium_calculator;
 import nm.luabbla;
 import geom: gridTypeName, Grid_t;
 
-import fvcell;
+import lmr.fluidfvcell;
 import fvinterface;
 import luaflowstate;
 import luaflowsolution;
@@ -36,6 +38,10 @@ import ssolidblock;
 import sfluidblock;
 import ufluidblock;
 import fluidblock;
+import blockio : luafn_writeFluidMetadata,
+    luafn_writeInitialFluidFile,
+    luafn_writeSolidMetadata,
+    luafn_writeInitialSolidFile;
 
 struct LuaEnvOptions {
     bool withGlobalConfig = true;
@@ -56,6 +62,14 @@ lua_State* initLuaStateForPrep()
     luaOpts.withFlow = true;
     luaOpts.withNumerics = true;
     registerLuaEnvironment(L, luaOpts);
+    lua_pushcfunction(L, &luafn_writeFluidMetadata);
+    lua_setglobal(L, "writeFluidMetadata");
+    lua_pushcfunction(L, &luafn_writeInitialFluidFile);
+    lua_setglobal(L, "writeInitialFluidFile");
+    lua_pushcfunction(L, &luafn_writeSolidMetadata);
+    lua_setglobal(L, "writeSolidMetadata");
+    lua_pushcfunction(L, &luafn_writeInitialSolidFile);
+    lua_setglobal(L, "writeInitialSolidFile");
     return L;
 }
 
@@ -77,6 +91,7 @@ void registerLuaEnvironment(lua_State *L, LuaEnvOptions opt)
     }
     if (opt.withGas) {
         registerGasModel(L);
+        registerEquilibriumCalculator(L);
     }
     if (opt.withFlow) {
         registerFlowSolution(L);
@@ -215,7 +230,7 @@ extern(C) int luafn_sampleFluidCell(lua_State *L)
     //
     // Grab the appropriate cell
     auto sblk = cast(SFluidBlock) globalBlocks[blkId];
-    FVCell cell;
+    FluidFVCell cell;
     if (sblk) {
         try {
             cell = sblk.get_cell(i, j, k);
@@ -258,7 +273,7 @@ extern(C) int luafn_setBxyzInFluidCell(lua_State *L)
         // Actually set the magnetic field components.
         // Grab the appropriate cell
         auto sblk = cast(SFluidBlock) globalBlocks[blkId];
-        FVCell cell;
+        FluidFVCell cell;
         if (sblk) {
             try {
                 cell = sblk.get_cell(i, j, k);
@@ -355,10 +370,10 @@ extern(C) int luafn_runTimeLoads(lua_State *L)
 // D code functions
 
 /**
- * Push the interesting data from a FVCell and FVInterface to a Lua table
+ * Push the interesting data from a FluidFVCell and FVInterface to a Lua table
  *
  */
-void pushFluidCellToTable(lua_State* L, int tblIdx, ref const(FVCell) cell,
+void pushFluidCellToTable(lua_State* L, int tblIdx, ref const(FluidFVCell) cell,
                           size_t gtl, LocalConfig myConfig)
 {
     lua_pushnumber(L, cell.pos[gtl].x); lua_setfield(L, tblIdx, "x");
@@ -368,7 +383,7 @@ void pushFluidCellToTable(lua_State* L, int tblIdx, ref const(FVCell) cell,
     lua_pushnumber(L, cell.iLength); lua_setfield(L, tblIdx, "iLength");
     lua_pushnumber(L, cell.jLength); lua_setfield(L, tblIdx, "jLength");
     lua_pushnumber(L, cell.kLength); lua_setfield(L, tblIdx, "kLength");
-    pushFlowStateToTable(L, tblIdx, cell.fs, myConfig.gmodel);
+    pushFlowStateToTable(L, tblIdx, *(cell.fs), myConfig.gmodel);
     // For Carrie Xie 2022-05-24, we want access to the user-defined energy source term
     // when we sample the Fluid cell during the UDF evaluation for the corresponding solid cell.
     auto cqi = myConfig.cqi;
@@ -395,7 +410,7 @@ void pushFluidFaceToTable(lua_State* L, int tblIdx, ref const(FVInterface) face,
     lua_pushnumber(L, face.gvel.x); lua_setfield(L, tblIdx, "gvelx");
     lua_pushnumber(L, face.gvel.y); lua_setfield(L, tblIdx, "gvely");
     lua_pushnumber(L, face.gvel.z); lua_setfield(L, tblIdx, "gvelz");
-    pushFlowStateToTable(L, tblIdx, face.fs, gmodel);
+    pushFlowStateToTable(L, tblIdx, *(face.fs), gmodel);
 } // end pushFluidFaceToTable()
 
 // ----------------------------------------------------------------------
@@ -474,18 +489,7 @@ void pushSolidCellToTable(lua_State* L, int tblIdx, ref const(SolidFVCell) cell)
     lua_pushnumber(L, cell.pos.z); lua_setfield(L, tblIdx, "z");
     lua_pushnumber(L, cell.volume); lua_setfield(L, tblIdx, "vol");
     lua_pushnumber(L, cell.T); lua_setfield(L, tblIdx, "T");
-    lua_pushnumber(L, cell.sp.rho); lua_setfield(L, tblIdx, "rho");
-    lua_pushnumber(L, cell.sp.Cp); lua_setfield(L, tblIdx, "Cp");
-    lua_pushnumber(L, cell.sp.k); lua_setfield(L, tblIdx, "k");
-
-    lua_pushnumber(L, cell.sp.k11); lua_setfield(L, tblIdx, "k11");
-    lua_pushnumber(L, cell.sp.k12); lua_setfield(L, tblIdx, "k12");
-    lua_pushnumber(L, cell.sp.k13); lua_setfield(L, tblIdx, "k13");
-    lua_pushnumber(L, cell.sp.k21); lua_setfield(L, tblIdx, "k21");
-    lua_pushnumber(L, cell.sp.k22); lua_setfield(L, tblIdx, "k22");
-    lua_pushnumber(L, cell.sp.k23); lua_setfield(L, tblIdx, "k23");
-    lua_pushnumber(L, cell.sp.k31); lua_setfield(L, tblIdx, "k31");
-    lua_pushnumber(L, cell.sp.k32); lua_setfield(L, tblIdx, "k32");
-    lua_pushnumber(L, cell.sp.k33); lua_setfield(L, tblIdx, "k33");
-
+    lua_pushnumber(L, cell.ss.rho); lua_setfield(L, tblIdx, "rho");
+    lua_pushnumber(L, cell.ss.Cp); lua_setfield(L, tblIdx, "Cp");
+    lua_pushnumber(L, cell.ss.k); lua_setfield(L, tblIdx, "k");
 } // end pushSolidCellToTable()

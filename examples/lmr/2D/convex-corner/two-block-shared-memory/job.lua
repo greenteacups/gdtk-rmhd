@@ -18,10 +18,9 @@ config.solver_mode = "steady"
 config.dimensions = 2
 config.axisymmetric = false
 config.print_count = 1
-config.new_flow_format = true
 config.save_residual_values = false
 config.save_limiter_values = false
-config.flow_format = fileFmt
+config.field_format = fileFmt
 config.grid_format = fileFmt
 
 -- ==========================================================
@@ -59,12 +58,12 @@ quad1 = makePatch{north=l43, east=l23, south=l12, west=l14}
 -- define grid
 nx = 15
 ny = 15
-grid0 = registerGrid{
+grid0 = registerFluidGrid{
    grid=StructuredGrid:new{psurface=quad0, niv=nx+1, njv=ny+1},
    fsTag="initial",
    bcTags={north="outflow",west="inflow"}
 }
-grid1 = registerGrid{
+grid1 = registerFluidGrid{
    grid=StructuredGrid:new{psurface=quad1, niv=nx+1, njv=ny+1},
    fsTag="initial",
    bcTags={north="outflow",east="outflow"}
@@ -139,14 +138,13 @@ NewtonKrylovGlobalConfig{
 }
 
 NewtonKrylovPhase:new{
-   use_local_timestep = true,
    residual_interpolation_order = 2,
    jacobian_interpolation_order = 2,
    frozen_preconditioner = true,
    frozen_limiter_for_jacobian = false,
    use_adaptive_preconditioner = false,
    steps_between_preconditioner_update = 5,
-   linear_solve_tolerance = 0.1,
+   linear_solve_tolerance = 0.01,
    use_auto_cfl = true,
    threshold_relative_residual_for_cfl_growth = 0.99,
    start_cfl = 1.0,

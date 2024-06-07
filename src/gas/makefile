@@ -88,7 +88,7 @@ ifeq ($(DMD), dmd)
     OF := -of
     DLINKFLAGS := -L-ldl
     ifeq ($(PLATFORM), macosx)
-	DLINKFLAGS += -L-ld_classic
+	DLINKFLAGS += -L-ld_classic -L-no_compact_unwind
     endif
 endif
 ifeq ($(DMD), ldmd2)
@@ -106,7 +106,7 @@ ifeq ($(DMD), ldmd2)
     OF := -of
     DLINKFLAGS := -L-ldl
     ifeq ($(PLATFORM), macosx)
-	DLINKFLAGS += -L-ld_classic
+	DLINKFLAGS += -L-ld_classic -L-no_compact_unwind
     endif
 endif
 ifeq ($(DMD), ldc2)
@@ -120,14 +120,18 @@ ifeq ($(DMD), ldc2)
         DFLAGS := -fprofile-generate -g -w -O -release -enable-inlining -boundscheck=off -d-version=flavour_profile
     endif
     ifeq ($(FLAVOUR), fast)
-        DFLAGS := -w -g -O -release -enable-inlining -boundscheck=off -d-version=flavour_fast -ffast-math -flto=full
+        DFLAGS := -w -g -O -release -enable-inlining -boundscheck=off -d-version=flavour_fast -ffast-math
+        ifeq ($(PLATFORM), linux)
+	    # Full link-time optimization does not play nicely on macOS
+	    DFLAGS += -flto=full
+        endif
     endif
     PIC := --relocation-model=pic
     DVERSION := -d-version=
     OF := -of=
     DLINKFLAGS := -L-ldl
     ifeq ($(PLATFORM), macosx)
-	DLINKFLAGS += -L-ld_classic
+	DLINKFLAGS += -L-ld_classic -L-no_compact_unwind
     endif
 endif
 
@@ -232,16 +236,16 @@ gas-calc: gas_calc.d $(LIBLUA) $(GAS_FILES) $(GAS_LUA_FILES) \
 		$(LIBCEQ) $(LIBGASF) $(LIBLUA) \
 		$(DLINKFLAGS)
 
-libgas.so: gas_cwrap.d $(LIBLUA) $(GAS_FILES) $(KINETICS_FILES) \
+libgas.so: gas_cwrap.d $(LIBLUA) $(GAS_FILES) $(GAS_LUA_FILES) $(KINETICS_FILES) \
 	$(NM_FILES) $(NTYPES_FILES) $(UTIL_FILES) $(GASDYN_FILES) \
-	$(CEQ_SRC_FILES) $(GEOM_FILES) $(GZIP_FILES) \
+	$(CEQ_SRC_FILES) $(GEOM_FILES) $(GZIP_FILES) $(KINETICS_LUA_FILES) \
 	$(LIBCEQ) $(LIBGASF) $(LIBLUA)
 	$(DMD) -c gas_cwrap.d $(PIC) $(DFLAGS) -op \
-		$(GAS_FILES) $(KINETICS_FILES) $(GASDYN_FILES) $(NM_FILES) $(NTYPES_FILES) \
+		$(GAS_FILES) $(GAS_LUA_FILES) $(KINETICS_FILES) $(KINETICS_LUA_FILES) $(GASDYN_FILES) $(NM_FILES) $(NTYPES_FILES) \
 		$(UTIL_FILES) $(CEQ_SRC_FILES) $(GEOM_FILES) $(GZIP_FILES)
 	$(DMD) $(OF)libgas.so gas_cwrap.o $(PIC) $(DFLAGS) -op -shared \
-		$(GAS_FILES) $(KINETICS_FILES) $(GASDYN_FILES) $(NM_FILES) $(NTYPES_FILES) \
-		$(UTIL_FILES) $(CEQ_SRC_FILES) $(GEOM_FILES) $(GZIP_FILES) \
+		$(GAS_FILES) $(GAS_LUA_FILES) $(KINETICS_FILES) $(GASDYN_FILES) $(NM_FILES) $(NTYPES_FILES) \
+		$(UTIL_FILES) $(CEQ_SRC_FILES) $(GEOM_FILES) $(GZIP_FILES) $(KINETICS_LUA_FILES) \
 		$(LIBCEQ) $(LIBGASF) $(LIBLUA) \
 		-L-L=$(INSTALL_DIR)/lib $(DLINKFLAGS)
 

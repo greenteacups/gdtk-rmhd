@@ -42,7 +42,6 @@ import fluidblock;
 import sfluidblock;
 import ufluidblock;
 import ssolidblock;
-import solidprops;
 import solidfvinterface;
 import solid_full_face_copy;
 import solid_gas_full_face_copy;
@@ -53,8 +52,7 @@ import solid_udf_source_terms;
 import grid_motion;
 import grid_motion_udf;
 import grid_motion_shock_fitting;
-import history;
-import loads;
+import lmr.loads;
 import conservedquantities;
 import special_block_init;
 import efield;
@@ -365,6 +363,7 @@ void compute_L2_residual(ref number L2_residual)
     }
 } // end compute_L2_residuals()
 
+/* This version used in timemarching.d */
 void compute_mass_balance(ref number mass_balance)
 {
     mass_balance = to!number(0.0);
@@ -374,6 +373,22 @@ void compute_mass_balance(ref number mass_balance)
     foreach (blk; localFluidBlocksBySize) {
         mass_balance += blk.mass_balance;
     }
+} // end compute_mass_balance()
+
+/* This version used in newtonkrylovsolver.d */
+double compute_mass_balance()
+{
+    double mass_balance = 0.0;
+    foreach (blk; parallel(localFluidBlocksBySize,1)) {
+        blk.compute_mass_balance();
+    }
+    foreach (blk; localFluidBlocksBySize) {
+        mass_balance += blk.mass_balance;
+    }
+    version(mpi_parallel) {
+        MPI_Allreduce(MPI_IN_PLACE, &(mass_balance), 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+    }
+    return fabs(mass_balance);
 } // end compute_mass_balance()
 
 void compute_wall_distances() {

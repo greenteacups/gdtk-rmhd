@@ -24,6 +24,7 @@ import geom;
 import bc;
 
 Command prepMappedCellsCmd;
+string cmdName = "prep-mapped-cells";
 
 static this()
 {
@@ -49,13 +50,20 @@ options ([+] can be repeated):
 
 }
 
-void main_(string[] args)
+int main_(string[] args)
 {
     int verbosity = 0;
-    getopt(args,
-           config.bundling,
-           "v|verbose+", &verbosity,
-          );
+    try {
+        getopt(args,
+               config.bundling,
+               "v|verbose+", &verbosity,
+               );
+    } catch (Exception e) {
+        writefln("Eilmer %s program quitting.", cmdName);
+        writeln("There is something wrong with the command-line arguments/options.");
+        writeln(e.msg);
+        return 1;
+    }
 
     if (verbosity > 0) {
         writeln("lmr prep-mapped-cells: Begin preparation of mapped cells list.");
@@ -66,14 +74,14 @@ void main_(string[] args)
      */
 
     alias cfg = GlobalConfig;
-    
+
     initConfiguration();
     if (cfg.nFluidBlocks == 0 && cfg.is_master_task) {
         throw new Error("No FluidBlocks; no point in continuing with mapped cell search.");
     }
     cfg.n_flow_time_levels = 2;
 
-    initLocalFluidBlocks();
+    initLocalBlocks();
 
     initThreadPool(1, 1);
 
@@ -129,7 +137,7 @@ void main_(string[] args)
         }
     }
     of.close();
-
+    return 0;
 }
 
 

@@ -17,7 +17,7 @@ import gas;
 import globalconfig;
 import flowstate;
 import fvinterface;
-import fvcell;
+import lmr.fluidfvcell;
 
 //------------------------------------------------------------------------------
 
@@ -73,6 +73,63 @@ string codeForThermoUpdateBoth(string funname)
     return codeForThermoUpdateLft(funname) ~ codeForThermoUpdateRght(funname);
 }
 
+struct L2R2InterpData {
+    number lenL0_;
+    number lenR0_;
+    number aL0;
+    number aR0;
+    number two_over_lenL0_plus_lenL1;
+    number two_over_lenR0_plus_lenL0;
+    number two_over_lenR1_plus_lenR0;
+    number two_lenL0_plus_lenL1;
+    number two_lenR0_plus_lenR1;
+
+    @nogc
+    void set(number lenL1, number lenL0, number lenR0, number lenR1){
+        lenL0_ = lenL0;
+        lenR0_ = lenR0;
+        aL0 = 0.5 * lenL0 / (lenL1 + 2.0*lenL0 + lenR0);
+        aR0 = 0.5 * lenR0 / (lenL0 + 2.0*lenR0 + lenR1);
+        two_over_lenL0_plus_lenL1 = 2.0 / (lenL0 + lenL1);
+        two_over_lenR0_plus_lenL0 = 2.0 / (lenR0 + lenL0);
+        two_over_lenR1_plus_lenR0 = 2.0 / (lenR1 + lenR0);
+        two_lenL0_plus_lenL1 = (2.0*lenL0 + lenL1);
+        two_lenR0_plus_lenR1 = (2.0*lenR0 + lenR1);
+    }
+}
+
+struct L3R3InterpData {
+    number wL_L2, wL_L1, wL_L0, wL_R0, wL_R1;
+    number wR_L1, wR_L0, wR_R0, wR_R1, wR_R2;
+
+    @nogc
+    void set(number lenL2, number lenL1, number lenL0,
+                      number lenR0, number lenR1, number lenR2)
+    // Set up intermediate data (Lagrange interpolation weights)
+    // that depend only on the cell geometry.
+    // They will remain constant when reconstructing the different scalar fields
+    // over the same set of cells.
+    {
+        // Positions of the cell centres relative to interpolation point.
+        number xL0 = -(0.5*lenL0);
+        number xL1 = -(lenL0 + 0.5*lenL1);
+        number xL2 = -(lenL0 + lenL1 + 0.5*lenL2);
+        number xR0 = 0.5*lenR0;
+        number xR1 = lenR0 + 0.5*lenR1;
+        number xR2 = lenR0 + lenR1 + 0.5*lenR2;
+        // Weights for Lagrangian interpolation at x=0.
+        wL_L2 = xL1*xL0*xR0*xR1/((xL2-xL1)*(xL2-xL0)*(xL2-xR0)*(xL2-xR1));
+        wL_L1 = xL2*xL0*xR0*xR1/((xL1-xL2)*(xL1-xL0)*(xL1-xR0)*(xL1-xR1));
+        wL_L0 = xL2*xL1*xR0*xR1/((xL0-xL2)*(xL0-xL1)*(xL0-xR0)*(xL0-xR1));
+        wL_R0 = xL2*xL1*xL0*xR1/((xR0-xL2)*(xR0-xL1)*(xR0-xL0)*(xR0-xR1));
+        wL_R1 = xL2*xL1*xL0*xR0/((xR1-xL2)*(xR1-xL1)*(xR1-xL0)*(xR1-xR0));
+        wR_L1 = xL0*xR0*xR1*xR2/((xL1-xL0)*(xL1-xR0)*(xL1-xR1)*(xL1-xR2));
+        wR_L0 = xL1*xR0*xR1*xR2/((xL0-xL1)*(xL0-xR0)*(xL0-xR1)*(xL0-xR2));
+        wR_R0 = xL1*xL0*xR1*xR2/((xR0-xL1)*(xR0-xL0)*(xR0-xR1)*(xR0-xR2));
+        wR_R1 = xL1*xL0*xR0*xR2/((xR1-xL1)*(xR1-xL0)*(xR1-xR0)*(xR1-xR2));
+        wR_R2 = xL1*xL0*xR0*xR1/((xR2-xL1)*(xR2-xL0)*(xR2-xR0)*(xR2-xR1));
+    }
+}
 
 class OneDInterpolator {
 
@@ -117,8 +174,8 @@ public:
     void  interp(ref FVInterface f, ref FlowState Lft, ref FlowState Rght)
     // Top-level interpolation function delegates to the specific functions, below.
     {
-        FVCell cL0 = (f.left_cells.length > 0) ? f.left_cells[0] : f.right_cells[0];
-        FVCell cR0 = (f.right_cells.length > 0) ? f.right_cells[0]: f.left_cells[0];
+        FluidFVCell cL0 = (f.left_cells.length > 0) ? f.left_cells[0] : f.right_cells[0];
+        FluidFVCell cR0 = (f.right_cells.length > 0) ? f.right_cells[0]: f.left_cells[0];
         Lft.copy_values_from(cL0.fs);
         Rght.copy_values_from(cR0.fs);
 
@@ -487,8 +544,8 @@ public:
 
     @nogc
     void interp_l3r3(ref FVInterface IFace,
-                     ref FVCell cL2, ref FVCell cL1, ref FVCell cL0,
-                     ref FVCell cR0, ref FVCell cR1, ref FVCell cR2,
+                     ref FluidFVCell cL2, ref FluidFVCell cL1, ref FluidFVCell cL0,
+                     ref FluidFVCell cR0, ref FluidFVCell cR1, ref FluidFVCell cR2,
                      number cL2Length, number cL1Length, number cL0Length,
                      number cR0Length, number cR1Length, number cR2Length,
                      ref FlowState Lft, ref FlowState Rght, number beta)
@@ -749,7 +806,7 @@ public:
 
     @nogc
     void interp_l2r2(ref FVInterface IFace,
-                     ref FVCell cL1, ref FVCell cL0, ref FVCell cR0, ref FVCell cR1,
+                     ref FluidFVCell cL1, ref FluidFVCell cL0, ref FluidFVCell cR0, ref FluidFVCell cR1,
                      number cL1Length, number cL0Length,
                      number cR0Length, number cR1Length,
                      ref FlowState Lft, ref FlowState Rght, number beta)
@@ -989,7 +1046,7 @@ public:
 
     @nogc
     void interp_l2r1(ref FVInterface IFace,
-                     ref FVCell cL1, ref FVCell cL0, ref FVCell cR0,
+                     ref FluidFVCell cL1, ref FluidFVCell cL0, ref FluidFVCell cR0,
                      number cL1Length, number cL0Length, number cR0Length,
                      ref FlowState Lft, ref FlowState Rght, number beta)
     {
@@ -1213,7 +1270,7 @@ public:
 
     @nogc
     void interp_l1r2(ref FVInterface IFace,
-                     ref FVCell cL0, ref FVCell cR0, ref FVCell cR1,
+                     ref FluidFVCell cL0, ref FluidFVCell cR0, ref FluidFVCell cR1,
                      number cL0Length, number cR0Length, number cR1Length,
                      ref FlowState Lft, ref FlowState Rght, number beta)
     // Reconstruct flow properties at an interface from cells L0,R0,R1.
@@ -1441,7 +1498,7 @@ public:
 
     @nogc
     void interp_l2r0(ref FVInterface IFace,
-                     ref FVCell cL1, ref FVCell cL0,
+                     ref FluidFVCell cL1, ref FluidFVCell cL0,
                      number cL1Length, number cL0Length,
                      ref FlowState Lft)
     {
@@ -1638,7 +1695,7 @@ public:
 
     @nogc
     void interp_l0r2(ref FVInterface IFace,
-                     ref FVCell cR0, ref FVCell cR1,
+                     ref FluidFVCell cR0, ref FluidFVCell cR1,
                      number cR0Length, number cR1Length,
                      ref FlowState Rght)
     {

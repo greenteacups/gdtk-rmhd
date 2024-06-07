@@ -53,7 +53,7 @@ for face,idx in pairs(Face) do
    bcTags[idx] = "udf"
 end
 
-grid = registerGrid{
+grid = registerFluidGrid{
    grid=UnstructuredGrid:new{sgrid=sgrid},
    fsTag="initial",
    bcTags=bcTags
@@ -78,7 +78,7 @@ NewtonKrylovGlobalConfig{
    max_newton_steps = 50,
    stop_on_relative_residual = 5e-14,
    number_of_phases = 2,
-   phase_changes_at_steps = { 10 },
+   max_steps_in_initial_phases = { 10 },
    inviscid_cfl_only = true,
    use_line_search = false,
    use_physicality_check = false,

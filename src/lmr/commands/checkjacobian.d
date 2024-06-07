@@ -6,11 +6,14 @@
  *
  * Authors: KAD and RJG
  * Date: 2023-07-18
+ * History:
+ *   2024-03-21 moved from the lmr commands to its own separate executable to allow for complex number version
  */
 
 module checkjacobian;
 
 import std.stdio;
+import std.algorithm;
 import std.random;
 import std.getopt;
 import std.range : empty;
@@ -34,14 +37,18 @@ import lmrconfig;
 import blockio;
 import flowsolution;
 
+string cmdName;
 Command checkJacCmd;
-
-string cmdName = "check-jacobian";
 
 static this()
 {
+    version(complex_numbers) {
+        cmdName = "lmrZ-check-jacobian";
+    } else {
+        cmdName = "lmr-check-jacobian";
+    }
     checkJacCmd.type = LmrCmdType.dev;
-    checkJacCmd.main = &main_;
+    checkJacCmd.main = &main;
     checkJacCmd.description = `
 Check formation of the Jacobian via two internal methods:
 1. The sparse matrix representation multiplied by a test vector; and
@@ -49,7 +56,7 @@ Check formation of the Jacobian via two internal methods:
 `;
     checkJacCmd.shortDescription = "Check the formation of the Jacobian.";
     checkJacCmd.helpMsg = format(
-`lmr %s [options]
+`%s [options]
 
 Check the formation of the Jacobian for a snapshot of the field variables.
 
@@ -79,20 +86,34 @@ options ([+] can be repeated):
 `, cmdName);
 }
 
-void main_(string[] args)
+int main(string[] args)
 {
+    bool helpWanted = false;
     int verbosity = 0;
     int snapshot = -1;
     string outFilename;
     bool readFrozenLimiterValues = false;
-    getopt(args,
-           config.bundling,
-           "v|verbose+", &verbosity,
-           "s|snapshot", &snapshot,
-           "o|output", &outFilename,
-           "rfl|read-frozen-limiter-values", &readFrozenLimiterValues);
+    try {
+        getopt(args,
+               config.bundling,
+               "h|help", &helpWanted,
+               "v|verbose+", &verbosity,
+               "s|snapshot", &snapshot,
+               "o|output", &outFilename,
+               "rfl|read-frozen-limiter-values", &readFrozenLimiterValues);
+    } catch (Exception e) {
+        writefln("Eilmer %s program quitting.", cmdName);
+        writeln("There is something wrong with the command-line arguments/options.");
+        writeln(e.msg);
+        return 1;
+    }
 
-    if (verbosity > 0) writefln("lmr %s: Begin program.", cmdName);
+    if (helpWanted || canFind(args, "help")) {
+        writeln(checkJacCmd.helpMsg);
+        return 0;
+    }
+
+    if (verbosity > 0) writefln("%s: Begin program.", cmdName);
 
     // Use stdout if no output filename is supplied,
     // or open a file ready for use if one is.
@@ -107,12 +128,12 @@ void main_(string[] args)
         // Rather than handle this error, let's define it away
         // A snapshot request beyond the number available gets set to the final snapshot
         // We'll warn the user though.
-        writefln("lmr %s: WARNING", cmdName);
+        writefln("%s: WARNING", cmdName);
         writefln("W: The snapshot requested {%d} is not available. Instead, selecting final snapshot {%d}.", snapshot, finalSnapshot);
         snapshot = finalSnapshot;
     }
 
-    if (verbosity > 1) writefln("lmt %s: Performing check with snapshot {%d}", cmdName, snapshot);
+    if (verbosity > 1) writefln("%s: Performing check with snapshot {%d}", cmdName, snapshot);
 
     /*
      * 0. Initialize Newton-Krylov simulation
@@ -128,15 +149,21 @@ void main_(string[] args)
     }
     activePhase = nkPhases[$-1]; // set to the last phase from the simulation
     evalResidual(0); // we perform a residual evaluation here to populate the ghost-cells
+    alias cfg = GlobalConfig;
+    size_t nConserved = cfg.cqi.n;
+
+    if (verbosity > 1) writefln("%s: Performing check with Jacobian perturbation parameter %.4e and Frechet perturbation parameter %.4e",
+                                cmdName, nkCfg.preconditionerPerturbation, nkCfg.frechetDerivativePerturbation);
+
+    // prepare fluidblock (note that this program only operates on a single fluidblock)
+    auto blk = localFluidBlocks[0];
+    if (readFrozenLimiterValues) readLimiterValues(snapshot);
 
     /*
      * 1. Do calculation of sparse-matrix Jacobian by test vector.
      */
     // 1a. Populate Jacobian
-    alias cfg = GlobalConfig;
-    auto blk = localFluidBlocks[0];
-    if (readFrozenLimiterValues) readLimiterValues(snapshot);
-    blk.initialize_jacobian(cfg.interpolation_order, 1.0e-250, 0);
+    blk.initialize_jacobian(cfg.interpolation_order, nkCfg.preconditionerPerturbation, 0);
     blk.evaluate_jacobian();
     // 1b. Prepare a test vector
     double[] testVec;
@@ -159,11 +186,20 @@ void main_(string[] args)
      */
     // 2a. Populate z with test vector
     allocateGlobalGMRESWorkspace();
-    blk.allocate_GMRES_workspace(1);
+    blk.allocate_GMRES_workspace(1, nkCfg.useRealValuedFrechetDerivative);
 
-    // 2b. Do Frechet step
+    // 2b. Do Frechet step (note for the real-valued variant we need to fill R0)
+    version(complex_numbers) {
+        // do nothing
+    } else {
+        int startIdx = 0;
+        foreach (cell; blk.cells) {
+            foreach (ivar; 0 .. nConserved) { blk.R0[startIdx+ivar] = cell.dUdt[0][ivar].re; }
+            startIdx += nConserved;
+        }
+    }
     blk.zed[] = testVec[];
-    evalJacobianVectorProduct(1.0e-250);
+    evalJacobianVectorProduct(nkCfg.frechetDerivativePerturbation);
 
     /*
      * 3. Compare vectors and write result to file.
@@ -180,7 +216,6 @@ void main_(string[] args)
     writefln("c1, 2-norm= %.16e", c1_2norm.re);
 
     outfile.writeln("# array_idx cell_idx c0   c1   c0-c1   abs(c0-c1)");
-    size_t nConserved = cfg.cqi.n;
     foreach (i; 0 .. c0.length) {
         auto delta = c0[i] - blk.zed[i];
         size_t cell_id = i/nConserved;
@@ -188,7 +223,7 @@ void main_(string[] args)
     }
     outfile.close();
 
-    return;
+    return 0;
 }
 
 void readLimiterValues(int snapshot)
@@ -202,26 +237,63 @@ void readLimiterValues(int snapshot)
     string[] variables;
     string fileFmt;
 
-    fileFmt = cfg.flow_format;
+    fileFmt = cfg.field_format;
     variables = readVariablesFromMetadata(lmrCfg.limiterMetadataFile);
+    size_t[string] variableIndex;
+    foreach (i, var; variables) variableIndex[var] = i;
     auto soln = new FlowSolution(to!int(snapshot), cfg.nFluidBlocks);
     foreach (i, blk; localFluidBlocks) {
-        readValuesFromFile(data, limiterFilename(to!int(snapshot), to!int(i)), variables,
-            soln.flowBlocks[0].ncells, fileFmt);
+        readValuesFromFile(data, limiterFilename(to!int(snapshot), to!int(i)),
+                           variables, soln.flowBlocks[0].ncells, fileFmt);
         foreach (j, cell; blk.cells) {
-            cell.gradients.rhoPhi = data[j][0];
-            cell.gradients.pPhi = data[j][1];
-            cell.gradients.velxPhi = data[j][2];
-            cell.gradients.velyPhi = data[j][3];
-            if (blk.myConfig.dimensions == 3) {
-                cell.gradients.velzPhi = data[j][4];
+            cell.gradients.velxPhi = data[j][variableIndex["vel.x"]];
+            cell.gradients.velyPhi = data[j][variableIndex["vel.y"]];
+            if (cfg.dimensions == 3) {
+                cell.gradients.velzPhi = data[j][variableIndex["vel.z"]];
             } else {
                 cell.gradients.velzPhi = 0.0;
             }
-            foreach(it; 0 .. blk.myConfig.turb_model.nturb){
-                cell.gradients.turbPhi[it] = data[j][5+it];
-	    }
+            final switch (cfg.thermo_interpolator) {
+                case InterpolateOption.pt:
+                    cell.gradients.pPhi = data[j][variableIndex["p"]];
+                    cell.gradients.TPhi = data[j][variableIndex["T"]];
+                    break;
+                case InterpolateOption.rhou:
+                    cell.gradients.rhoPhi = data[j][variableIndex["rho"]];
+                    cell.gradients.uPhi = data[j][variableIndex["e"]];
+                    break;
+                case InterpolateOption.rhop:
+                    cell.gradients.rhoPhi = data[j][variableIndex["rho"]];
+                    cell.gradients.pPhi = data[j][variableIndex["p"]];
+                    break;
+                case InterpolateOption.rhot:
+                    cell.gradients.rhoPhi = data[j][variableIndex["rho"]];
+                    cell.gradients.TPhi = data[j][variableIndex["T"]];
+                    break;
+            }
+            foreach (isp; 0 .. cfg.gmodel_master.n_species) {
+                cell.gradients.rho_sPhi[isp] = data[j][variableIndex["massf-" ~ cfg.gmodel_master.species_name(isp)]];
+            }
+            foreach (imode; 0 .. cfg.gmodel_master.n_modes) {
+                if (cfg.thermo_interpolator == InterpolateOption.rhou ||
+                    cfg.thermo_interpolator == InterpolateOption.rhop ) {
+                    cell.gradients.u_modesPhi[imode] = data[j][variableIndex["e-" ~ cfg.gmodel_master.energy_mode_name(imode)]];
+                }
+                else {
+                    cell.gradients.T_modesPhi[imode] = data[j][variableIndex["T-" ~ cfg.gmodel_master.energy_mode_name(imode)]];
+                }
+            }
+            if (cfg.turbulence_model_name != "none") {
+                foreach (iturb; 0 .. cfg.turb_model.nturb) {
+                    cell.gradients.turbPhi[iturb] = data[j][variableIndex["tq-" ~ cfg.turb_model.primitive_variable_name(iturb)]];
+                }
+            }
+            if (cfg.MHD) {
+                writeln("WARNING: lmr-check-jacobian currently does not support reading MHD limiter values, proceeding with re-evaluated MHD limiter values.");
+            }
         }
     }
     cfg.frozen_limiter = true;
+    activePhase.frozenLimiterForJacobian = true;
+    activePhase.frozenLimiterForResidual = true;
 }

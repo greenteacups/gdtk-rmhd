@@ -4,6 +4,7 @@ print("Set up steady-state solve of Mach 1.5 flow over a 20 degree cone.")
 -- 0. Assume that a previous processing step has set up the grid.
 --
 -- 1. Domain type, gas model and flow states
+config.solver_mode = "steady"
 config.axisymmetric = true
 setGasModel('ideal-air.gas')
 initial = FlowState:new{p=5955.0, T=304.0} -- Pa, degrees K
@@ -29,7 +30,7 @@ NewtonKrylovGlobalConfig{
    number_of_steps_for_setting_reference_residuals = 3,
    stop_on_relative_residual = 1.0e-6,
    number_of_phases = 2,
-   phase_changes_at_steps = { 10 },
+   max_steps_in_initial_phases = { 15 },
    use_physicality_check = true,
    max_linear_solver_iterations = 10,
    total_snapshots = 3,
@@ -47,7 +48,7 @@ NewtonKrylovPhase:new{
    threshold_relative_residual_for_cfl_growth = 0.9,
    start_cfl = 2.0,
    max_cfl = 1.0e6,
-   auto_cfl_exponent = 1.0
+   auto_cfl_exponent = 0.9
 }
 
 NewtonKrylovPhase:new{

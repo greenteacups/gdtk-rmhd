@@ -15,9 +15,8 @@
 --          3. case configuration via 'config.txt'
 --
 
-config.title = "Method of Manufactured Solutions."
-print(config.title)
 config.dimensions = 2
+config.solver_mode = "steady"
 
 -- Case is configured by a higher-level controller.
 -- Options are placed in config.txt as simple
@@ -48,7 +47,7 @@ for face,idx in pairs(Face) do
    bcTags[idx] = "udf"
 end
 
-grid = registerGrid{
+grid = registerFluidGrid{
    grid=UnstructuredGrid:new{sgrid=sgrid},
    fsTag="initial",
    bcTags=bcTags
@@ -81,7 +80,7 @@ NewtonKrylovGlobalConfig{
    max_newton_steps = 70,
    stop_on_relative_residual = 1e-15,
    number_of_phases = 2,
-   phase_changes_at_steps = { 20 },
+   max_steps_in_initial_phases = { 20 },
    inviscid_cfl_only = true,
    use_line_search = false,
    use_physicality_check = false,

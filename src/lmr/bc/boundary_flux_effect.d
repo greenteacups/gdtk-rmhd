@@ -28,11 +28,10 @@ import globaldata;
 import fluidblock;
 import sfluidblock;
 import ufluidblock;
-import fvcell;
+import lmr.fluidfvcell;
 import fvinterface;
 import solidfvcell;
 import solidfvinterface;
-import gas_solid_interface;
 import flowstate;
 import gas;
 import bc;
@@ -214,7 +213,7 @@ public:
         dnS = fabs(cosA*dxS + cosB*dyS + cosC*dzS);
 
         kG_dnG = myBC.gasCells[f.i_bndry].fs.gas.k / dnG;
-        kS_dnS = myBC.solidCells[f.i_bndry].sp.k / dnS;
+        kS_dnS = myBC.solidCells[f.i_bndry].ss.k / dnS;
 
         T = (myBC.gasCells[f.i_bndry].fs.gas.T*kG_dnG + myBC.solidCells[f.i_bndry].T*kS_dnS) / (kG_dnG + kS_dnS);
         q = -kG_dnG * (T - myBC.gasCells[f.i_bndry].fs.gas.T);
@@ -273,7 +272,7 @@ public:
             dnS = fabs(cosA*dxS + cosB*dyS + cosC*dzS);
 
             kG_dnG = myBC.gasCells[i].fs.gas.k / dnG;
-            kS_dnS = myBC.solidCells[i].sp.k / dnS;
+            kS_dnS = myBC.solidCells[i].ss.k / dnS;
 
             T = (myBC.gasCells[i].fs.gas.T*kG_dnG + myBC.solidCells[i].T*kS_dnS) / (kG_dnG + kS_dnS);
             q = -kG_dnG * (T - myBC.gasCells[i].fs.gas.T);
@@ -307,7 +306,7 @@ private:
     // We'll pack data into these can pass out
     // to a routine that can compute the flux and
     // temperatures that balance at the interface.
-    FVCell[] _gasCells;
+    FluidFVCell[] _gasCells;
     FVInterface[] _gasIFaces;
     SolidFVCell[] _solidCells;
     SolidFVInterface[] _solidIFaces;
@@ -466,7 +465,7 @@ private:
         number vely_rel = vely - f.gvel.y;
         number velz_rel = velz - f.gvel.z;
         number massFlux = rho * (velx_rel*f.n.x + vely_rel*f.n.y + velz_rel*f.n.z);
-        f.F[cqi.mass] = massFlux;
+        if (cqi.mass==0) f.F[cqi.mass] = massFlux;
         /++ when the boundary is moving we use the relative velocity
          + between the fluid and the boundary interface to determine
          + the amount of mass flux across the cell face (above).
@@ -522,7 +521,7 @@ public:
         //
         BoundaryCondition bc = blk.bc[which_boundary];
 	int outsign = bc.outsigns[f.i_bndry];
-	FVCell interior_cell = (outsign == 1) ? f.left_cell : f.right_cell;
+	FluidFVCell interior_cell = (outsign == 1) ? f.left_cell : f.right_cell;
 	compute_outflow_flux(interior_cell.fs, outsign, blk.omegaz, f);
     }
 
@@ -536,7 +535,7 @@ public:
         BoundaryCondition bc = blk.bc[which_boundary];
         foreach (i, face; bc.faces) {
             int outsign = bc.outsigns[i];
-            FVCell interior_cell = (outsign == 1) ? face.left_cell : face.right_cell;
+            FluidFVCell interior_cell = (outsign == 1) ? face.left_cell : face.right_cell;
             compute_outflow_flux(interior_cell.fs, outsign, blk.omegaz, face);
         }
     }
@@ -549,7 +548,7 @@ public:
         assert(!(blk.myConfig.MHD), "Oops, not implemented for MHD.");
         BoundaryCondition bc = blk.bc[which_boundary];
 	int outsign = bc.outsigns[f.i_bndry];
-	FVCell interior_cell = (outsign == 1) ? f.left_cells[0] : f.right_cells[0];
+	FluidFVCell interior_cell = (outsign == 1) ? f.left_cells[0] : f.right_cells[0];
 	compute_outflow_flux(interior_cell.fs, outsign, blk.omegaz, f);
     } // end apply_for_interface_structured_grid()
 
@@ -563,14 +562,14 @@ public:
         //
         foreach (i, f; bc.faces) {
             int outsign = bc.outsigns[i];
-            FVCell interior_cell = (outsign == 1) ? f.left_cells[0] : f.right_cells[0];
+            FluidFVCell interior_cell = (outsign == 1) ? f.left_cells[0] : f.right_cells[0];
             compute_outflow_flux(interior_cell.fs, outsign, blk.omegaz, f);
         }
     } // end apply_structured_grid()
 
 private:
     @nogc
-    void compute_outflow_flux(ref const(FlowState) fs, int outsign, double omegaz, ref FVInterface face)
+    void compute_outflow_flux(FlowState* fs, int outsign, double omegaz, ref FVInterface face)
     {
         // Flux equations use the local flow state information.
         // For a moving grid we need vel relative to the interface.
@@ -579,7 +578,7 @@ private:
         number mass_flux = fs.gas.rho * dot(v_rel, face.n);
         if ((outsign*mass_flux) > 0.0) {
             // We have a true outflow flux.
-            face.F[cqi.mass] = mass_flux;
+            if (cqi.mass==0) face.F[cqi.mass] = mass_flux;
             face.F[cqi.xMom] = fs.gas.p * face.n.x + fs.vel.x * mass_flux;
             face.F[cqi.yMom] = fs.gas.p * face.n.y + fs.vel.y * mass_flux;
             if (cqi.threeD) { face.F[cqi.zMom] = fs.gas.p * face.n.z + fs.vel.z * mass_flux; }
@@ -588,7 +587,7 @@ private:
                 foreach (umode; fs.gas.u_modes) { utot += umode; }
             }
             version(turbulence) {
-                utot += blk.myConfig.turb_model.turbulent_kinetic_energy(fs);
+                utot += blk.myConfig.turb_model.turbulent_kinetic_energy(*fs);
             }
             face.F[cqi.totEnergy] = mass_flux*utot + fs.gas.p*dot(fs.vel,face.n);
             if (omegaz != 0.0) {
@@ -620,7 +619,7 @@ private:
             // indicates that flow should be coming into the domain.
             // Since we really do not want to have this happen,
             // we close off the face and think of it as a wall.
-            face.F[cqi.mass] = 0.0;
+            if (cqi.mass==0) face.F[cqi.mass] = 0.0;
             face.F[cqi.xMom] = face.n.x * fs.gas.p;
             face.F[cqi.yMom] = face.n.y * fs.gas.p;
             if (cqi.threeD) { face.F[cqi.zMom] = face.n.z * fs.gas.p; }
@@ -700,7 +699,7 @@ public:
             f.F[cqi.xMom] = f.fs.gas.p * dot(f.n, nx);
             f.F[cqi.yMom] = f.fs.gas.p * dot(f.n, ny);
             if (cqi.threeD) { f.F[cqi.zMom] = f.fs.gas.p * dot(f.n, nz); }
-            f.F[cqi.mass] = 0.;
+            if (cqi.mass==0) f.F[cqi.mass] = 0.;
         }
     } // end apply_structured_grid()
 } // end BFE_UpdateEnergyWallNormalVelocity

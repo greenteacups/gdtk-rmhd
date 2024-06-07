@@ -20,9 +20,14 @@ import fluidblock;
 import fluidblockarray;
 import ssolidblock;
 import block;
-import loads;
 import efield;
+import blockio : BlockIO;
+import lmr.loads : RunTimeLoads;
 version(FSI) { import fsi; }
+
+// I/O objects (thread-local) for access from any module
+BlockIO fluidBlkIO;
+BlockIO solidBlkIO;
 
 // State data for simulation.
 // Needs to be seen by all of the coordination functions in simcore.d.

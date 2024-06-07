@@ -92,7 +92,7 @@ ifeq ($(DMD), dmd)
     DVERSION := -version=
     DLINKFLAGS := -L-ldl
     ifeq ($(PLATFORM), macosx)
-	DLINKFLAGS += -L-ld_classic
+	DLINKFLAGS += -L-ld_classic -L-no_compact_unwind
     endif
 endif
 ifeq ($(DMD), ldmd2)
@@ -110,7 +110,7 @@ ifeq ($(DMD), ldmd2)
     DVERSION := -version=
     DLINKFLAGS := -L-ldl
     ifeq ($(PLATFORM), macosx)
-	DLINKFLAGS += -L-ld_classic
+	DLINKFLAGS += -L-ld_classic -L-no_compact_unwind
     endif
 endif
 ifeq ($(DMD), ldc2)
@@ -124,14 +124,18 @@ ifeq ($(DMD), ldc2)
         DFLAGS := -fprofile-generate -g -w -O -release -enable-inlining -boundscheck=off -d-version=flavour_profile
     endif
     ifeq ($(FLAVOUR), fast)
-        DFLAGS := -w -g -O -release -enable-inlining -boundscheck=off -d-version=flavour_fast -ffast-math -flto=full
+        DFLAGS := -w -g -O -release -enable-inlining -boundscheck=off -d-version=flavour_fast -ffast-math
+        ifeq ($(PLATFORM), linux)
+	    # Full link-time optimization does not play nicely on macOS
+	    DFLAGS += -flto=full
+        endif
     endif
     PIC := --relocation-model=pic
     OF := -of=
     DVERSION := -d-version=
     DLINKFLAGS := -L-ldl
     ifeq ($(PLATFORM), macosx)
-	DLINKFLAGS += -L-ld_classic
+	DLINKFLAGS += -L-ld_classic -L-no_compact_unwind
     endif
 endif
 # DIP1008 allows throwing of exceptions in @nogc code. Appeared in 2.079.0, 2018-03-01.

@@ -1,36 +1,46 @@
 -- grid.lua
 --
--- Each Grid object, in the Lua domain, will hold a reference to a Dlang
+-- Each RegisteredGrid object, in the Lua domain, will hold a reference to a Dlang
 -- StructuredGrid or UnstructuredGrid, plus some metadata needed to assign
--- boundary conditions and the like.
+-- boundary conditions (and the like) at a later point in time.
 --
 -- PJ, 2021-10-05 pulled out of prep-grids.lua
+-- RJG, 2024-03-03 add handling of solid domains
 --
 
-local Grid = {
-   myType = "Grid"
+local RegisteredGrid = {
+   myType = "RegisteredGrid"
 }
 
-function Grid:new(o)
+function RegisteredGrid:new(o)
    -- Input:
    -- A single table with named items.
    -- grid: a StructuredGrid or UnstructuredGrid object that has been generated
    --    or imported.
    -- tag: a string to identify the grid later in the user's script
+   -- fieldType: a string labelling the intended domain as 'fluid' or 'solid'
+   -- active: a boolean to indicate if the domain on the grid is active (default: true)
    -- fsTag: a string that will be used to select the initial flow condition from
    --    a dictionary when the FluidBlock is later constructed.
    -- bcTags: a table of strings that will be used to attach boundary conditions
    --    from a dictionary when the FluidBlock is later constructed.
    -- gridArrayId: needs to be supplied only if the grid is part of a larger array.
-   local flag = type(self)=='table' and self.myType=='Grid'
+   -- ssTag: a string that will be used to select the initial solid condition from
+   --    a dictionary when the SolidBlock is later constructed.
+   -- solidPropsTag: a string that will be used to select the properties model
+   --    for the solid from a dictionary when the SolidBlock is later constructed
+   -- solidBCTags: a table of strings that will be used to attach boundary conditions
+   --    from a dictionary when the SolidBlock is later constructed
+   local flag = type(self)=='table' and self.myType=='RegisteredGrid'
    if not flag then
-      error("Make sure that you are using Grid:new{} and not Grid.new{}", 2)
+      error("Make sure that you are using RegisteredGrid:new{} and not RegisteredGrid.new{}", 2)
    end
    local flag = type(o)=='table'
    if not flag then
-      error("Grid constructor expects a single table with named items.", 2)
+      error("RegisteredGrid constructor expects a single table with named items.", 2)
    end
-   flag = checkAllowedNames(o, {"grid", "tag", "fsTag", "bcTags", "gridArrayId"})
+   flag = checkAllowedNames(o, {"grid", "tag", "fieldType", "active", "fsTag", "bcTags", "gridArrayId",
+                                "ssTag", "solidModelTag", "solidBCTags"})
    if not flag then
       error("Invalid name for item supplied to Grid constructor.", 2)
    end
@@ -45,10 +55,22 @@ function Grid:new(o)
       error('Have previously defined a Grid with tag "' .. o.tag .. '"', 2)
    end
    gridsDict[o.tag] = o.id
+   -- Set the field type
+   -- (we expect the call from registerFluidGrid of registerSolidGrid to set this correctly)
+   o.fieldType = o.fieldType or "fluid"
+   -- Most common is that grids represent active parts of the domain, however there may be reasons
+   -- to deactivate certain regions
+   if (o.active == nil) then
+      o.active = true
+   end
    -- Set to -1 if NOT part of a grid-array, otherwise use supplied value
    o.gridArrayId = o.gridArrayId or -1
    -- Initial FlowState tag
    o.fsTag = o.fsTag or ""
+   -- Initial SolidState tag
+   o.ssTag = o.ssTag or ""
+   -- Solid properties tag
+   o.solidModelTag = o.solidModelTag or ""
    -- Must have a grid.
    assert(o.grid, "need to supply a grid")
    -- Check the grid information.
@@ -58,6 +80,7 @@ function Grid:new(o)
       error(msg)
    end
    o.bcTags = o.bcTags or {}
+   o.solidBCTags = o.solidBCTags or {}
    o.type = o.grid:get_type()
    if o.type == "structured_grid" then
       -- Extract some information from the StructuredGrid
@@ -65,34 +88,32 @@ function Grid:new(o)
       o.nic = o.grid:get_niv() - 1
       o.njc = o.grid:get_njv() - 1
       if config.dimensions == 3 then
-	 o.nkc = o.grid:get_nkv() - 1
+         o.nkc = o.grid:get_nkv() - 1
       else
-	 o.nkc = 1
+         o.nkc = 1
       end
       o.ncells = o.nic * o.njc * o.nkc
       -- The following table p for the corner locations,
       -- is to be used later for testing for grid connections.
       o.p = {}
       if config.dimensions == 3 then
-	 o.p[0] = o.grid:get_vtx(0, 0, 0)
-	 o.p[1] = o.grid:get_vtx(o.nic, 0, 0)
-	 o.p[2] = o.grid:get_vtx(o.nic, o.njc, 0)
-	 o.p[3] = o.grid:get_vtx(0, o.njc, 0)
-	 o.p[4] = o.grid:get_vtx(0, 0, o.nkc)
-	 o.p[5] = o.grid:get_vtx(o.nic, 0, o.nkc)
-	 o.p[6] = o.grid:get_vtx(o.nic, o.njc, o.nkc)
-	 o.p[7] = o.grid:get_vtx(0, o.njc, o.nkc)
+         o.p[0] = o.grid:get_vtx(0, 0, 0)
+         o.p[1] = o.grid:get_vtx(o.nic, 0, 0)
+         o.p[2] = o.grid:get_vtx(o.nic, o.njc, 0)
+         o.p[3] = o.grid:get_vtx(0, o.njc, 0)
+         o.p[4] = o.grid:get_vtx(0, 0, o.nkc)
+         o.p[5] = o.grid:get_vtx(o.nic, 0, o.nkc)
+         o.p[6] = o.grid:get_vtx(o.nic, o.njc, o.nkc)
+         o.p[7] = o.grid:get_vtx(0, o.njc, o.nkc)
       else
-	 o.p[0] = o.grid:get_vtx(0, 0)
-	 o.p[1] = o.grid:get_vtx(o.nic, 0)
-	 o.p[2] = o.grid:get_vtx(o.nic, o.njc)
-	 o.p[3] = o.grid:get_vtx(0, o.njc)
+         o.p[0] = o.grid:get_vtx(0, 0)
+         o.p[1] = o.grid:get_vtx(o.nic, 0)
+         o.p[2] = o.grid:get_vtx(o.nic, o.njc)
+         o.p[3] = o.grid:get_vtx(0, o.njc)
       end
-      --[[print("Grid id=", o.id, "p0=", tostring(o.p[0]), "p1=", tostring(o.p[1]),
-         "p2=", tostring(o.p[2]), "p3=", tostring(o.p[3])) ]]
       -- Attach default boundary conditions for those not specified.
       for _,face in ipairs(faceList(config.dimensions)) do
-	 o.bcTags[face] = o.bcTags[face] or o.grid:get_tag(face)
+         o.bcTags[face] = o.bcTags[face] or o.grid:get_tag(face)
       end
    end
    if o.type == "unstructured_grid" then
@@ -105,15 +126,20 @@ function Grid:new(o)
       for i = 0, o.nboundaries-1 do
          o.bcTags[i] = o.bcTags[i] or o.grid:get_boundaryset_tag(i)
       end
+      -- [TODO] RJG, 2024-03-03
+      -- Presently, we don't handle unstructured solid domains.
+      -- When we do, we'll need to set that information on boundaries here.
    end
    return o
-end -- Grid:new
+end -- RegisteredGrid:new
 
-function Grid:tojson()
+function RegisteredGrid:tojson()
    str = '{\n'
    str = str .. string.format('  "tag": "%s",\n', self.tag)
    str = str .. string.format('  "fsTag": "%s",\n', self.fsTag)
    str = str .. string.format('  "type": "%s",\n', self.type)
+   str = str .. string.format('  "fieldType": "%s",\n', self.fieldType)
+   str = str .. string.format('  "active": %s,\n', self.active)
    if self.type == "structured_grid" then
       str = str .. string.format('  "dimensions": %d,\n', self.grid:get_dimensions())
       str = str .. string.format('  "niv": %d,\n', self.grid:get_niv())
@@ -153,6 +179,15 @@ function Grid:tojson()
    end
    str = str .. '    "dummy_entry_without_trailing_comma": "xxxx"\n'
    str = str .. '  },\n'
+   str = str .. string.format('  "ssTag": "%s",\n', self.ssTag)
+   str = str .. string.format('  "solidModelTag": "%s",\n', self.solidModelTag)
+   str = str .. '  "solidBCTags": {\n'
+   -- Only handle structured case presently
+   for k, v in pairs(self.solidBCTags) do
+      str = str .. string.format('    "%s": "%s",\n', k, v)
+   end
+   str = str .. '    "dummy_entry_without_trailing_comma": "xxxx"\n'
+   str = str .. '  },\n'
    str = str .. string.format('  "gridArrayId": %d\n', self.gridArrayId) -- last item, no comma
    str = str .. '}\n'
    return str
@@ -165,6 +200,9 @@ end -- end Grid:tojson()
 -- needs storage: connectionList = {}
 
 local function connectGrids(idA, faceA, idB, faceB, orientation)
+   -- in 2D, there is only one orientation for connecting a pair of faces.
+   -- Since the user will probably not think of providing it, let's default to 0.
+   orientation = orientation or 0
    if false then -- debug
       print(string.format('connectGrids(idA=%d, faceA="%s", idB=%d, faceB="%s", orientation=%d)',
                           idA, faceA, idB, faceB, orientation))
@@ -228,43 +266,43 @@ local function identifyGridConnections(includeList, excludeList, tolerance)
    --
    for _,A in ipairs(myGridList) do
       for _,B in ipairs(myGridList) do
-	 if (A ~= B) and (not isPairInList({A, B}, excludeList)) then
-	    -- print("Proceed with test for coincident vertices.") -- DEBUG
-	    local connectionCount = 0
-	    if config.dimensions == 2 then
-	       -- print("2D test A.id=", A.id, " B.id=", B.id) -- DEBUG
-	       for vtxPairs,connection in pairs(connections2D) do
+         if (A ~= B) and (not isPairInList({A, B}, excludeList)) then
+            -- print("Proceed with test for coincident vertices.") -- DEBUG
+            local connectionCount = 0
+            if config.dimensions == 2 then
+	          -- print("2D test A.id=", A.id, " B.id=", B.id) -- DEBUG
+               for vtxPairs,connection in pairs(connections2D) do
                   if false then -- debug
                      print("vtxPairs=", tostringVtxPairList(vtxPairs),
                            "connection=", tostringConnection(connection))
                   end
                   if verticesAreCoincident(A, B, vtxPairs, tolerance) then
-		     local faceA, faceB, orientation = unpack(connection)
-		     connectGrids(A.id, faceA, B.id, faceB, 0)
-		     connectionCount = connectionCount + 1
-		  end
-	       end
-	    else
-	       -- print("   3D test")
+                     local faceA, faceB, orientation = unpack(connection)
+                     connectGrids(A.id, faceA, B.id, faceB, 0)
+                     connectionCount = connectionCount + 1
+                  end
+               end
+            else
+	             -- print("   3D test")
                for vtxPairs,connection in pairs(connections3D) do
-		  if verticesAreCoincident(A, B, vtxPairs, tolerance) then
-		     local faceA, faceB, orientation = unpack(connection)
-		     connectGrids(A.id, faceA, B.id, faceB, orientation)
-		     connectionCount = connectionCount + 1
-		  end
-	       end
-	    end
-	    if connectionCount > 0 then
-	       -- So we don't double-up on connections.
-	       excludeList[#excludeList+1] = {A,B}
-	    end
-	 end -- if (A ~= B...
+                  if verticesAreCoincident(A, B, vtxPairs, tolerance) then
+                     local faceA, faceB, orientation = unpack(connection)
+                     connectGrids(A.id, faceA, B.id, faceB, orientation)
+                     connectionCount = connectionCount + 1
+                  end
+	             end
+	          end
+	          if connectionCount > 0 then
+	             -- So we don't double-up on connections.
+	             excludeList[#excludeList+1] = {A,B}
+	          end
+	       end -- if (A ~= B...
       end -- for _,B
    end -- for _,A
 end -- identifyGridConnections
 
 return {
-   Grid = Grid,
+   RegisteredGrid = RegisteredGrid,
    connectGrids = connectGrids,
    connectionAsJSON = connectionAsJSON,
    identifyGridConnections = identifyGridConnections

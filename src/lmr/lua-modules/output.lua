@@ -42,7 +42,7 @@ function output.write_config_file(fileName)
    f:write(string.format('"solver_mode": "%s",\n', config.solver_mode))
    f:write(string.format('"start_time": %.18e,\n', config.start_time))
    f:write(string.format('"grid_format": "%s",\n', config.grid_format))
-   f:write(string.format('"flow_format": "%s",\n', config.flow_format))
+   f:write(string.format('"field_format": "%s",\n', config.field_format))
    f:write(string.format('"gas_model_file": "%s",\n', config.gas_model_file))
    f:write(string.format('"udf_supervisor_file": "%s",\n', tostring(config.udf_supervisor_file)))
    if type(user_pad_data) == 'table' then
@@ -73,6 +73,7 @@ function output.write_config_file(fileName)
    f:write(string.format('"residual_smoothing": %s,\n', tostring(config.residual_smoothing)))
    f:write(string.format('"with_local_time_stepping": %s,\n', tostring(config.with_local_time_stepping)))
    f:write(string.format('"local_time_stepping_limit_factor": %d,\n', tostring(config.local_time_stepping_limit_factor)))
+   f:write(string.format('"with_super_time_stepping": %s,\n', tostring(config.with_super_time_stepping)))
    f:write(string.format('"with_super_time_stepping_flexible_stages": %s,\n', tostring(config.with_super_time_stepping_flexible_stages)))
    f:write(string.format('"max_attempts_for_step": %d,\n', config.max_attempts_for_step))
    f:write(string.format('"ignore_low_T_thermo_update_failure": %s,\n', tostring(config.ignore_low_T_thermo_update_failure)))
@@ -108,12 +109,17 @@ function output.write_config_file(fileName)
    f:write('],\n')
    --
    f:write(string.format('"solid_domain_cfl" : %.18e,\n', config.solid_domain_cfl))
-   f:write(string.format('"coupling_with_solid_domains": "%s",\n',
-			 config.coupling_with_solid_domains))
-   f:write(string.format('"solid_has_isotropic_properties": %s,\n', tostring(config.solid_has_isotropic_properties)))
-   f:write(string.format('"solid_has_homogeneous_properties": %s,\n', tostring(config.solid_has_homogeneous_properties)))
+   f:write(string.format('"coupling_with_solid_domains": "%s",\n', config.coupling_with_solid_domains))
    f:write(string.format('"solid_domain_augmented_deriv_avg": %s,\n', tostring(config.solid_domain_augmented_deriv_avg)))
    f:write(string.format('"fluid_solid_bc_use_heat_transfer_coeff": %s,\n', tostring(config.fluid_solid_bc_use_heat_transfer_coeff)))
+   f:write(string.format('"solid_has_isotropic_properties": %s,\n', tostring(config.solid_has_isotropic_properties)))
+   f:write('"solid_thermal_models": {\n')
+   for k,v in pairs(_solidModels) do
+      f:write(string.format(' "%s": \n', k))
+      f:write(string.format('%s,', v:tojson()))
+   end
+   f:write('\n "dummy_entry_without_trailing_comma": 0\n') -- no comma on last entry
+   f:write('},\n')
    --[[ RJG, 2024-02-13 disabled temporarily
    f:write('"solid_domain_loose_update_options" : {\n')
    f:write(string.format('   "max_newton_iterations" : %d,\n', SolidDomainLooseUpdate.max_newton_iterations))
@@ -240,6 +246,8 @@ function output.write_config_file(fileName)
    f:write(string.format('"nic_write": %d,\n', config.nic_write))
    f:write(string.format('"njc_write": %d,\n', config.njc_write))
    f:write(string.format('"nkc_write": %d,\n', config.nkc_write))
+   f:write(string.format('"viscous_factor": %.18e,\n', config.viscous_factor))
+   f:write(string.format('"viscous_factor_increment": %.18e,\n', config.viscous_factor_increment))
    f:write(string.format('"viscous_delay": %.18e,\n', config.viscous_delay))
    f:write(string.format('"shear_stress_relative_limit": %.18e,\n', config.shear_stress_relative_limit))
    f:write(string.format('"apply_shear_stress_relative_limit": %s,\n', tostring(config.apply_shear_stress_relative_limit)))
@@ -299,8 +307,9 @@ function output.write_config_file(fileName)
    f:write(string.format('"radiation_energy_dump_temperature_limit": %.18e,\n', config.radiation_energy_dump_temperature_limit))
    --
    f:write(string.format('"control_count": %d,\n', config.control_count))
-   f:write(string.format('"nfluidblock": %d,\n', #(fluidBlocks)))
-   f:write(string.format('"nfluidblockarrays": %d,\n', #(fluidBlockArrays)))
+   f:write(string.format('"write_transient_residuals": %s,\n', tostring(config.write_transient_residuals)))
+   f:write(string.format('"nfluidblock": %d,\n', #fluidBlocks))
+   f:write(string.format('"nfluidblockarrays": %d,\n', #fluidBlockArrays))
    --
    f:write(string.format('"diffuse_wall_bcs_on_init": %s,\n', tostring(config.diffuse_wall_bcs_on_init)))
    f:write(string.format('"number_init_passes": %d,\n', config.number_init_passes))
@@ -386,7 +395,8 @@ function output.write_config_file(fileName)
    f:write(string.format('"nsolidblock": %d,\n', #solidBlocks))
    --
    for i = 1, #fluidBlockArrays do
-      f:write(fluidBlockArrays[i]:tojson() .. ",\n")
+      f:write(string.format('"fluid_block_array_%d": ', (i-1)))
+      f:write(json.stringify(fluidBlockArrays[i]) .. ",\n")
    end
    for i = 1, #fluidBlocks do
       f:write(fluidBlocks[i]:tojson() .. ",\n")
@@ -428,9 +438,9 @@ function output.write_mpimap_file(fileName)
    if not mpiTasks then
       -- The user's input script has not set up mpiTasks, so we need to do it now.
       if config.block_marching then
-         -- Work through the fluidBlockArrays and allocate MPI tasks for each block array.
+         -- Work through fluidBlockArrays and allocate MPI tasks for each block array.
          for _,fba in ipairs(fluidBlockArrays) do
-            mpiDistributeFBArray{fba=fba, ntasks=fba.njb*fba.nkb}
+            mpiDistributeFluidBlockArray{fba=fba, ntasks=fba.njb*fba.nkb}
          end
       else
          -- Work through the single-dimensional fluidBlocks list
@@ -449,152 +459,26 @@ function output.write_mpimap_file(fileName)
 end
 
 function output.write_fluidBlockArrays_file(fileName)
+   -- This fluidBlockArrays file is intended to hold Lua code that the user's
+   -- Lua scripts can read in and make use of at run time.
+   --
+   -- 2024-02-27: In the transition to Eilmer 5 code, this function has been gutted.
+   -- When we want to restore some of its former glory, the fluidBlockArrays file
+   -- in the Eilmer 4 code base is the place to look for suitable bits.
+   --
    local f = assert(io.open(fileName, "w"))
-   f:write("-- A description of the fluidBlockArrays in Lua code.\n")
+   f:write("-- A description of the fluidBlockArrays/gridArrays in Lua code.\n")
    f:write("-- Use dofile() to get the content into your interpreter.\n")
    f:write("fluidBlockArrays = {\n")
    for i = 1, #(fluidBlockArrays) do
       local fba = fluidBlockArrays[i]
-      f:write(string.format("  [%d]={label=\"%s\",\n", fba.id, fba.label))
-      f:write(string.format("    nib=%d, njb=%d, nkb=%d,\n", fba.nib, fba.njb, fba.nkb))
       local blkId = 0
-      if config.dimensions == 3 then
-         blkId = fba.blockArray[1][1][1].id
-      else
-         blkId = fba.blockArray[1][1].id
-      end
-      f:write(string.format("    p00=function() return infoFluidBlock(%d).p00 end,\n", blkId));
-      if config.dimensions == 3 then
-         blkId = fba.blockArray[fba.nib][1][1].id
-      else
-         blkId = fba.blockArray[fba.nib][1].id
-      end
-      f:write(string.format("    p10=function() return infoFluidBlock(%d).p10 end,\n", blkId));
-      if config.dimensions == 3 then
-         blkId = fba.blockArray[fba.nib][fba.njb][1].id
-      else
-         blkId = fba.blockArray[fba.nib][fba.njb].id
-      end
-      f:write(string.format("    p11=function() return infoFluidBlock(%d).p11 end,\n", blkId));
-      if config.dimensions == 3 then
-         blkId = fba.blockArray[1][fba.njb][1].id
-      else
-         blkId = fba.blockArray[1][fba.njb].id
-      end
-      f:write(string.format("    p01=function() return infoFluidBlock(%d).p01 end,\n", blkId));
-      --
-      f:write("    blockCollection={")
-      for _,blk in ipairs(fba.blockCollection) do
-         f:write(string.format("%d, ", blk.id))
-      end
-      f:write("}, -- end blockCollection\n")
-      --
-      f:write("    blockArray={\n")
-      for ib,itable in pairs(fba.blockArray) do
-         f:write(string.format("      [%d]={", ib))
-         for jb,jitem in pairs(itable) do
-            f:write(string.format("[%d]={", jb))
-            if config.dimensions == 3 then
-               for kb,blk in pairs(jitem) do
-                  f:write(string.format("[%d]=%d, ", kb, blk.id))
-               end
-            else
-               -- For 2D
-               f:write(string.format("[1]=%d" , jitem.id))
-            end
-            f:write("}, ") -- end [ib][jb]
-         end
-         f:write("}, -- end [ib]\n")
-      end
-      f:write("    }, -- end blockArray\n")
+      -- [FIX-ME] Guts go here.  Need to pick data elements out of the reloaded metadata.
       f:write("  },\n")
    end
    f:write("} -- end fluidBlockArrays\n")
    --
-   f:write("-- Dictionary of FluidBlockArrays\n")
-   f:write("fluidBlockArraysDict = {\n")
-   for label,id in pairs(fluidBlockArraysDict) do
-      f:write(string.format(' ["%s"]=%d,\n', label, id))
-   end
-   f:write("} -- end fluidBlockArraysDict\n")
-   --
-   f:write("-- Map from FluidBlock id to FluidBlockArray id\n")
-   f:write("whichFluidBlockArray = {\n")
-   for i,blk in ipairs(fluidBlocks) do
-      if blk.fluidBlockArrayId >= 0 then
-         f:write(string.format(" [%d]=%d,", blk.id, blk.fluidBlockArrayId))
-      end
-      if (i > 1 and i%5 == 0) or i == #fluidBlocks then f:write("\n") end
-   end
-   f:write("} -- end whichFluidBlockArray\n")
-   --
-   f:write("-- Map from FluidBlock id to FluidBlockArray label\n")
-   f:write("whichFluidBlockArrayLabel = {\n")
-   for i,blk in ipairs(fluidBlocks) do
-      if blk.fluidBlockArrayId >= 0 then
-         fba = fluidBlockArrays[blk.fluidBlockArrayId+1]
-         f:write(string.format(' [%d]="%s",', blk.id, fba.label))
-      end
-      if (i > 1 and i%5 == 0) or i == #fluidBlocks then f:write("\n") end
-   end
-   f:write("} -- end whichFluidBlockArrayLabel\n")
-   --
-   f:write("-- Dictionary of FluidBlocks\n")
-   f:write("fluidBlocksDict = {\n")
-   for label,id in pairs(fluidBlocksDict) do
-      f:write(string.format(' ["%s"]=%d,\n', label, id))
-   end
-   f:write("} -- end fluidBlocksDict\n")
-   --
-   local fnBodyStr = [[
-function is_in_FluidBlockArray(blkId, label)
-   -- Returns true if a block is in a particular FluidBlockArray.
-   local myfba = whichFluidBlockArrayLabel[blkId]
-   if not myfba then
-      return false
-   end
-   if label == myfba then
-      return true
-   else
-      return false
-   end
-end
-]]
-   f:write(fnBodyStr)
-   --
    f:close()
 end -- function write_fluidBlockArrays_file
-
-function output.write_shock_fitting_helper_files(job)
-   print("For shock-fitting, write rails and weights files.")
-   for i = 1, #(fluidBlockArrays) do
-      local fba = fluidBlockArrays[i]
-      if fba.shock_fitting then
-         local filename = string.format("config/fba-%04d.rails", fba.id)
-         local f = assert(io.open(filename, "w"))
-         f:write("# Rails are presently described by the initial west- and east-boundary coordinates.\n")
-         for k = 0, fba.nkv-1 do
-            for j = 0, fba.njv-1 do
-               local pw = fba.grid:get_vtx(0,j,k)
-               local pe = fba.grid:get_vtx(fba.niv-1,j,k)
-               f:write(string.format("%.18e %.18e %.18e %.18e %.18e %.18e\n",
-                                     pw.x, pw.y, pw.z, pe.x, pe.y, pe.z))
-            end
-         end
-         f:close()
-         local filename = string.format("config/fba-%04d.weights", fba.id)
-         local f = assert(io.open(filename, "w"))
-         f:write("# Weights represent the arc-length distance of each vertex from the east-boundary vertex.\n")
-         for k = 0, fba.nkv-1 do
-            for j = 0, fba.njv-1 do
-               for i = 0, fba.niv-1 do
-                  f:write(string.format("%.18e\n", fba.velocity_weights[i][j][k]))
-               end
-            end
-         end
-         f:close()
-      end
-   end
-end -- function write_shock_fitting_helper_files
 
 return output

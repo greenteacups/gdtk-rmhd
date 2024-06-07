@@ -245,6 +245,35 @@ extern(C) int joinGrid(lua_State* L)
     return 0;
 }
 
+extern(C) int rotateGrid(lua_State* L)
+{
+    // Flynn Hack 2023-03-23
+    int narg = lua_gettop(L);
+    auto grid = checkObj!(StructuredGrid, StructuredGridMT)(L, 1);
+    lua_remove(L, 1); // remove grid from stack
+    if (narg == 2 && lua_istable(L, 1)) {
+        lua_getfield(L, 1, "q0");
+        double q0 = lua_tonumber(L, -1);
+        lua_pop(L, 1);
+        lua_getfield(L, 1, "q1");
+        double q1 = lua_tonumber(L, -1);
+        lua_pop(L, 1);
+        lua_getfield(L, 1, "q2");
+        double q2 = lua_tonumber(L, -1);
+        lua_pop(L, 1);
+        lua_getfield(L, 1, "q3");
+        double q3 = lua_tonumber(L, -1);
+        lua_pop(L, 1);
+        grid.rotateGrid(q0, q1, q2, q3); // rotate our grid
+        return 0;
+    } else {
+        string errMsg = "Expected grid:rotateGrid{q0=number, q1=number,
+                                                    q2=number, q3=number} ";
+        luaL_error(L, errMsg.toStringz);
+        return 1;
+    }
+} // end rotateGrid
+
 extern(C) int find_nearest_cell_centre_sg(lua_State *L)
 {
     double x, y, z;
@@ -301,7 +330,7 @@ extern(C) int find_nearest_cell_centre_sg(lua_State *L)
  *                             interpolation="linear",
  *                             label="A-3D-Grid"}
  *
- * importedGrid = StructuredGrid:new{file="myFileName.dat", fmt="vtk"}
+ * importedGrid = StructuredGrid:new{filename="myFileName.dat", fmt="vtk"}
  * The (default) format "vtk" is the legacy text format for the VTK system.
  * Other format values could be "gziptext", which is the Eilmer4 native file
  * or "text", which is essentially the Eilmer3 native file uncompressed.
@@ -324,7 +353,7 @@ extern(C) int newStructuredGrid(lua_State* L)
     }
     if (!checkAllowedNames(L, 1, ["path","psurface","pvolume","niv","njv","nkv",
                                   "cf","cfList","label","filename","fileName","fmt",
-				  "r_grid","s_grid","interpolation"])) {
+                                  "r_grid","s_grid","interpolation"])) {
         string errMsg = "Error in call to StructuredGrid:new{}. Invalid name in table.";
         luaL_error(L, errMsg.toStringz);
     }
@@ -835,6 +864,8 @@ void registerStructuredGrid(lua_State* L)
     lua_setfield(L, -2, "write_to_raw_binary_file");
     lua_pushcfunction(L, &joinGrid);
     lua_setfield(L, -2, "joinGrid");
+    lua_pushcfunction(L, &rotateGrid);
+    lua_setfield(L, -2, "rotateGrid");
     lua_pushcfunction(L, &find_nearest_cell_centre_sg);
     lua_setfield(L, -2, "find_nearest_cell_centre");
     lua_pushcfunction(L, &makeSlabGrid);

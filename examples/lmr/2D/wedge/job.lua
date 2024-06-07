@@ -15,16 +15,16 @@
 fileFmt = os.getenv("LMR_FILE_FORMAT") or "rawbinary"
 
 job_title = "Mach 3 air flowing over a 15 degree wedge."
-config.title = job_title
 print(job_title)
 
 -- General settings
+config.solver_mode = 'steady'
 config.dimensions = 2
 config.axisymmetric = false
 config.print_count = 1
 config.save_residual_values = true
 config.save_limiter_values = true
-config.flow_format = fileFmt
+config.field_format = fileFmt
 config.grid_format = fileFmt
 
 -- ==========================================================
@@ -81,7 +81,7 @@ sgrid0 = StructuredGrid:new{psurface=quad0, niv=nx0+1, njv=ny+1}
 sgrid1 = StructuredGrid:new{psurface=quad1, niv=nx1+1, njv=ny+1}
 sgrid0:joinGrid(sgrid1, "east")
 
-grid0 = registerGrid{
+grid0 = registerFluidGrid{
    grid=UnstructuredGrid:new{sgrid=sgrid0},
    fsTag="initial",
    bcTags={[Face.west]="inflow", [Face.east]="outflow", [Face.south]="wall", [Face.north]="outflow"}
@@ -137,14 +137,13 @@ NewtonKrylovGlobalConfig{
 }
 
 NewtonKrylovPhase:new{
-   use_local_timestep = true,
    residual_interpolation_order = 2,
    jacobian_interpolation_order = 2,
    frozen_preconditioner = true,
    steps_between_preconditioner_update = 5,
    use_adaptive_preconditioner = false,
    frozen_limiter_for_jacobian = false,
-   linear_solve_tolerance = 0.1,
+   linear_solve_tolerance = 0.01,
    use_auto_cfl = true,
    threshold_relative_residual_for_cfl_growth = 1.0,
    start_cfl = 1.0,

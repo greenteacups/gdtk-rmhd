@@ -360,7 +360,7 @@ ifeq ($(DMD), dmd)
     endif
     DLINKFLAGS := $(DLINKFLAGS) -L-ldl
     ifeq ($(PLATFORM), macosx)
-	DLINKFLAGS += -L-ld_classic
+	DLINKFLAGS += -L-ld_classic -L-no_compact_unwind
     endif
     ifneq ($(TECPLOT_BIN_DIR), unavailable)
         DLINKFLAGS += -L$(TECPLOT_BIN_DIR)/libtecio.so -L$(TECPLOT_BIN_DIR)/sys/libstdc++.so.6
@@ -380,7 +380,7 @@ ifeq ($(DMD), ldmd2)
     endif
     DLINKFLAGS := $(DLINKFLAGS) -L-ldl
     ifeq ($(PLATFORM), macosx)
-	DLINKFLAGS += -L-ld_classic
+	DLINKFLAGS += -L-ld_classic -L-no_compact_unwind
     endif
     ifneq ($(TECPLOT_BIN_DIR), unavailable)
         DLINKFLAGS += -L$(TECPLOT_BIN_DIR)/libtecio.so -L$(TECPLOT_BIN_DIR)/sys/libstdc++.so.6
@@ -397,7 +397,11 @@ ifeq ($(DMD), ldc2)
 	DEBUG_DFLAGS += -L-export-dynamic
     endif
     PROFILE_DFLAGS := -fprofile-generate -g -w -O2 -release -enable-inlining -boundscheck=off -d-version=flavour_profile
-    FAST_DFLAGS := -w -g -O2 -release -enable-inlining -boundscheck=off -d-version=flavour_fast -flto=full
+    FAST_DFLAGS := -w -g -O2 -release -enable-inlining -boundscheck=off -d-version=flavour_fast
+    ifeq ($(PLATFORM), linux)
+	# Full link-time optimization does not play nicely on macOS
+	FAST_DFLAGS += -flto=full
+    endif
     # DIP1008 allows throwing of exceptions in @nogc code. Appeared in 2.079.0, 2018-03-01.
     DFLAGS += -dip1008 -preview=in
     ifeq ($(WITH_THREAD_SANITIZER), 1)
@@ -410,7 +414,7 @@ ifeq ($(DMD), ldc2)
     DVERSION := -d-version=
     DLINKFLAGS :=
     ifeq ($(PLATFORM), macosx)
-	DLINKFLAGS += -L-ld_classic
+	DLINKFLAGS += -L-ld_classic -L-no_compact_unwind
     endif
     ifeq ($(WITH_THREAD_SANITIZER), 1)
         DLINKFLAGS := $(DLINKFLAGS) -fsanitize=thread

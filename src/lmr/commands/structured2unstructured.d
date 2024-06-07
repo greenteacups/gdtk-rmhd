@@ -60,16 +60,23 @@ options ([+] can be repeated):
 
 enum GridType { gziptext, rawbinary }
 
-void main_(string[] args)
+int main_(string[] args)
 {
     int verbosity = 0;
     GridType gridType;
-    getopt(args,
-           config.bundling,
-           "v|verbose+", &verbosity,
-           config.noBundling,
-           "t|grid-type", &gridType
-          );
+    try {
+        getopt(args,
+               config.bundling,
+               "v|verbose+", &verbosity,
+               config.noBundling,
+               "t|grid-type", &gridType
+               );
+    } catch (Exception e) {
+        writefln("Eilmer %s program quitting.", cmdName);
+        writeln("There is something wrong with the command-line arguments/options.");
+        writeln(e.msg);
+        return 1;
+    }
 
     if (verbosity >= 1) {
         writefln("lmr %s: Begin conversion of structured grids to unstructured grids.", cmdName);
@@ -180,7 +187,7 @@ void main_(string[] args)
     if (verbosity >= 1) {
         writefln("lmr %s: Done.", cmdName);
     }
-
+    return 0;
 }
 
 struct CellAndFacePos {
@@ -307,6 +314,15 @@ void writeMappedCellsFile(StructuredGrid[] sgrids, ref BlockAndCellId[string][si
     of.close();
 }
 
+/*
+ * Keep in synch with lua-modules/grid.lua -- RegisteredGrid:tojson()
+ *
+ * RJG, 2024-03-06
+ * There is a maintenance burden in keeping this in sync.
+ * However, this technical debt will need to be paid later.
+ * I'm hoping grid metadata is relatively stable over time.
+ * We shouldn't need to revisit this function that often.
+ */
 void writeUnstructuredGridMetadata(UnstructuredGrid[] ugrids, JSONValue[] sgridsMetadata, string[size_t][size_t] newTags)
 {
     auto of = File(lmrCfg.gridMetadataFile, "w");
@@ -324,6 +340,7 @@ void writeUnstructuredGridMetadata(UnstructuredGrid[] ugrids, JSONValue[] sgrids
         of.writefln("  \"tag\": \"%s\",", sgridsMetadata[ig]["tag"].str);
         of.writefln("  \"fsTag\": \"%s\",", sgridsMetadata[ig]["fsTag"].str);
         of.writefln("  \"type\": \"unstructured_grid\",");
+        of.writefln("  \"fieldType\": \"%s\",", sgridsMetadata[ig]["fieldType"].str);
         of.writefln("  \"dimensions\": %d,", ugrid.dimensions);
         of.writefln("  \"nvertices\": %d,", ugrid.nvertices);
         of.writefln("  \"ncells\": %d,", ugrid.ncells);
@@ -346,6 +363,12 @@ void writeUnstructuredGridMetadata(UnstructuredGrid[] ugrids, JSONValue[] sgrids
         }
         of.writeln("    \"dummy_entry_without_trailing_comma\": \"xxxx\"");
         of.writeln("   },");
+        of.writefln("  \"ssTag\": \"%s\",", sgridsMetadata[ig]["ssTag"].str);
+        of.writefln("  \"solidModelTag\": \"%s\",", sgridsMetadata[ig]["solidModelTag"].str);
+        // [TODO] RJG, 2024-03-06
+        // We don't actually have unstructured grids for solid domains,
+        // so I don't yet know how to write out the boundary information.
+        // On that point, the above two entries are presently superfluous, but won't hurt.
         of.writeln("   \"gridArrayId\": -1");
         of.writeln("}");
         of.close();

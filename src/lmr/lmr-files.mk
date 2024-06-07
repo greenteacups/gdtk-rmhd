@@ -5,6 +5,7 @@ LMR_LUA_MOD = $(LMR)/lua-modules
 LMR_LUA_WRAP = $(LMR)/luawrap
 
 LMR_CORE_FILES = $(LMR)/block.d \
+	$(LMR)/coredata.d \
 	$(LMR)/blockio.d \
 	$(LMR)/conservedquantities.d \
 	$(LMR)/fileutil.d \
@@ -14,11 +15,11 @@ LMR_CORE_FILES = $(LMR)/block.d \
 	$(LMR)/fluidblock.d \
 	$(LMR)/fluidblockarray.d \
 	$(LMR)/fluxcalc.d \
+	$(LMR)/fluidfvcell.d \
 	$(LMR)/fvcell.d \
 	$(LMR)/fvcellio.d \
 	$(LMR)/fvinterface.d \
 	$(LMR)/fvvertex.d \
-	$(LMR)/gas_solid_interface.d \
 	$(LMR)/globalconfig.d \
 	$(LMR)/globaldata.d \
 	$(LMR)/grid_motion.d \
@@ -27,6 +28,7 @@ LMR_CORE_FILES = $(LMR)/block.d \
 	$(LMR)/history.d \
 	$(LMR)/init.d \
 	$(LMR)/jacobian.d \
+	$(LMR)/lmrerrors.d \
 	$(LMR)/lmrexceptions.d \
 	$(LMR)/loads.d \
 	$(LMR)/lsqinterp.d \
@@ -80,10 +82,10 @@ LMR_SOLID_FILES := $(LMR)/solid/solidbc.d \
 	$(LMR)/solid/solidfvcell.d \
 	$(LMR)/solid/solidfvinterface.d \
 	$(LMR)/solid/solidfvvertex.d \
-	$(LMR)/solid/solidprops.d \
 	$(LMR)/solid/solidsolution.d \
-	$(LMR)/solid/solid_udf_source_terms.d \
-	$(LMR)/solid/luasolidprops.d
+	$(LMR)/solid/solidstate.d \
+	$(LMR)/solid/solidthermalmodel.d \
+	$(LMR)/solid/solid_udf_source_terms.d
 
 LMR_EFIELD_FILES := $(LMR)/efield/efield.d \
 	$(LMR)/efield/efieldgmres.d \
@@ -95,15 +97,23 @@ LMR_EFIELD_FILES := $(LMR)/efield/efield.d \
 LMR_LUA_FILES = $(LMR_LUA_WRAP)/luaflowsolution.d \
 	$(LMR_LUA_WRAP)/luaflowstate.d
 
-LMR_CMD_FILES = $(LMR_CMD)/checkjacobian.d \
-	$(LMR_CMD)/cmdhelper.d \
+LMR_CMD_FILES = $(LMR_CMD)/cmdhelper.d \
 	$(LMR_CMD)/command.d \
 	$(LMR_CMD)/computenorms.d \
+	$(LMR_CMD)/customscript.d \
 	$(LMR_CMD)/probeflow.d \
+	$(LMR_CMD)/sliceflow.d \
+	$(LMR_CMD)/slicesolid.d \
+	$(LMR_CMD)/extractline.d \
+	$(LMR_CMD)/listspecies.d \
 	$(LMR_CMD)/limiter2vtk.d \
+	$(LMR_CMD)/residual2vtk.d \
+	$(LMR_CMD)/prepenergyexchange.d \
+	$(LMR_CMD)/prepgas.d \
 	$(LMR_CMD)/prepsim.d \
 	$(LMR_CMD)/prepgrids.d \
 	$(LMR_CMD)/prepmappedcells.d \
+	$(LMR_CMD)/prepreactions.d \
 	$(LMR_CMD)/revisionid.d \
 	$(LMR_CMD)/runsim.d \
 	$(LMR_CMD)/snapshot2vtk.d \

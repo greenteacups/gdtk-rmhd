@@ -15,6 +15,7 @@ import lmrconfig;
 import command;
 
 Command revisionIdCmd;
+string cmdName = "revision-id";
 
 static this()
 {
@@ -39,21 +40,27 @@ option:
 
 }
 
-void main_(string[] args)
+int main_(string[] args)
 {
     bool showFull = false;
-
-    getopt(args,
-           config.bundling,
-           "f|full", &showFull);
+    try {
+        getopt(args,
+               config.bundling,
+               "f|full", &showFull);
+    } catch (Exception e) {
+        writefln("Eilmer %s program quitting.", cmdName);
+        writeln("There is something wrong with the command-line arguments/options.");
+        writeln(e.msg);
+        return 1;
+    }
 
     if (showFull) {
         writeln(lmrCfg.fullRevisionId);
-        return;
+        return 0;
     }
 
     writeln(lmrCfg.revisionId);
-    return;
+    return 0;
 }
 
 

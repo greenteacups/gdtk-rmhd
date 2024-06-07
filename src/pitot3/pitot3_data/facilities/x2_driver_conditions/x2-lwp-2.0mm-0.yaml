@@ -1,7 +1,10 @@
-# X2's 80%He 2 mm driver condition
-# Values from Table 2 of 
-# Gildfind et al. (2015)
+# X2's 80%He/20%Ar 2 mm driver condition
+# Empirical rupture Values from Table 2 of Gildfind et al. (2015)
 # Free-piston driver performance characterisation using experimental shock speeds through helium
+#
+# I actually went through and changed M_throat to D_throat as to me it seems more 'physical' for the user.
+# 
+# Chris James (c.james4@uq.edu.au) - 23/03/24
 
 driver_condition_name : 'x2-lwp-2.0mm-0'
 driver_condition_type : 'empirical'
@@ -15,6 +18,6 @@ driver_withIons : False
 p4 : 23.9e6 # Pa
 T4 : 2747.0 # K
 
-M_throat : 1.0 
+D_throat : 0.085 # m (85 mm), (this is just the shock tube diameter, i.e. M_throat = 1 )
 
 

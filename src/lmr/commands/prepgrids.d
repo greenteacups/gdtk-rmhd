@@ -25,6 +25,7 @@ import luaflowsolution;
 import luaflowstate;
 
 Command prepGridCmd;
+string cmdName = "prep-grids";
 
 static this()
 {
@@ -48,15 +49,22 @@ options ([+] can be repeated):
 }
 
 
-void main_(string[] args)
+int main_(string[] args)
 {
     int verbosity = 0;
     string userGridName = lmrCfg.jobFile;
-    getopt(args,
-           config.bundling,
-           "v|verbose+", &verbosity,
-           "j|job", &userGridName,
-           );
+    try {
+        getopt(args,
+               config.bundling,
+               "v|verbose+", &verbosity,
+               "j|job", &userGridName,
+               );
+    } catch (Exception e) {
+        writefln("Eilmer %s program quitting.", cmdName);
+        writeln("There is something wrong with the command-line arguments/options.");
+        writeln(e.msg);
+        return 1;
+    }
 
     if (verbosity > 0) {
         writeln("lmr prep-grids: Begin preparation of grid files.");
@@ -65,7 +73,7 @@ void main_(string[] args)
     if (!exists(userGridName)) {
         writefln("The file %s does not seems to exist.", userGridName);
         writeln("Did you mean to specify a different job name?");
-        return;
+        return 1;
     }
 
     if (verbosity > 1) writeln("lmr prep-grids: Start lua connection.");
@@ -90,5 +98,5 @@ void main_(string[] args)
         throw new FlowSolverException(errMsg);
     }
     if (verbosity > 0) { writeln("lmr prep-grids: Done."); }
-    return;
+    return 0;
 }

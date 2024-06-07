@@ -2,23 +2,23 @@ LMR_DIR := lmrsim
 
 help:
 	@echo "Main targets available are:"
-	@echo -e "   prep"
-	@echo -e "   run"
-	@echo -e "   post"
+	@echo "    prep"
+	@echo "    run"
+	@echo "    post"
 
 prep: gas grid init
 
 gas: ideal-air.lua
-	prep-gas ideal-air.lua ideal-air.gas
+	lmr prep-gas -i ideal-air.lua -o ideal-air.gas
 
 grid: job.lua
 	lmr prep-grid
 
 init:
-	lmr prep-flow --mode=steady
+	lmr prep-sim
 
 run:
-	lmr run-steady
+	lmr run
 
 post: vtk
 

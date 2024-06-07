@@ -65,13 +65,10 @@ public:
         number[3][] T_modes;
     }
     version(turbulence) {
-        number[3][] turb; // turbulence primitive variables
+        number[3][2] turb; // turbulence primitive variables
     }
-private:
-    LocalConfig myConfig;
 
-public:
-    this(ref LocalConfig myConfig)
+    this(in LocalConfig myConfig)
     {
         // Note that the gradient values are initialized to zero.
         // This is because some of the updates (e.g. the point-implicit update)
@@ -80,7 +77,6 @@ public:
         // On the first iteration, having initial Nan values would poison
         // that average but zero values are tolerable.
         // On later iterations, the gradient value from a previous iteration is fine.
-        this.myConfig = myConfig;
         foreach (i; 0 .. 3) {
             foreach (j; 0 .. 3) { vel[i][j] = to!number(0.0); }
             T[i] = to!number(0.0);
@@ -98,8 +94,7 @@ public:
             }
         }
         version(turbulence) {
-            turb.length = myConfig.turb_model.nturb;
-            foreach (i; 0 .. myConfig.turb_model.nturb) { // Note that this dimension is fixed above.
+            foreach (i; 0 .. myConfig.turb_model.nturb) {
                 foreach (j; 0 .. 3) { turb[i][j] = to!number(0.0); }
             }
         }
@@ -118,7 +113,6 @@ public:
             foreach (imode; 0 .. other.T_modes.length) { T_modes[imode][] = other.T_modes[imode][]; }
         }
         version(turbulence) {
-            turb.length = other.turb.length;
             foreach(i; 0 .. turb.length) turb[i][] = other.turb[i][];
         }
     }
@@ -220,8 +214,8 @@ public:
         }
         version(turbulence) {
             repr ~= ", turb=[";
-            if (myConfig.turb_model.nturb>0) repr ~= to!string(turb[0]);
-            foreach (i; 1 .. myConfig.turb_model.nturb) repr ~= ", " ~ to!string(turb[i]);
+            if (turb.length>0) repr ~= to!string(turb[0]);
+            foreach (i; 1 .. turb.length) repr ~= ", " ~ to!string(turb[i]);
             repr ~= "]";
         }
         repr ~= ")";
@@ -229,7 +223,7 @@ public:
     }
 
     @nogc
-    void gradients_xy_div(ref FlowState*[] cloud_fs, ref Vector3*[] cloud_pos)
+    void gradients_xy_div(in LocalConfig myConfig, ref FlowState*[] cloud_fs, ref Vector3*[] cloud_pos)
     // Using the divergence theorem (I think), compute the average gradients
     // for the flow conditions over a polygon in the xy-plane.
     //     2-----1   1
@@ -336,7 +330,7 @@ public:
     } // end gradients_xy_div()
 
     @nogc
-    void set_up_workspace_leastsq(ref Vector3*[] cloud_pos, ref Vector3 pos,
+    void set_up_workspace_leastsq(in LocalConfig myConfig, ref Vector3*[] cloud_pos, ref Vector3 pos,
                                   bool compute_about_mid, ref WLSQGradWorkspace ws)
     {
         assert(&ws !is null, "We are missing the workspace!");
@@ -481,7 +475,7 @@ public:
     } // end set_up_workspace_leastsq()
 
     @nogc
-    void gradients_leastsq(ref FlowState*[] cloud_fs, ref Vector3*[] cloud_pos,
+    void gradients_leastsq(in LocalConfig myConfig, ref FlowState*[] cloud_fs, ref Vector3*[] cloud_pos,
                            ref WLSQGradWorkspace ws)
     // Evaluate the gradients using the precomputed weights.
     {

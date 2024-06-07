@@ -26,14 +26,17 @@ NewtonKrylovGlobalConfigHidden = {
 
    -- phase control
    number_of_phases = 1,
-   phase_changes_at_steps = {},
+   max_steps_in_initial_phases = {},
+   phase_changes_at_relative_residual = {},
 
    -- Newton stepping control and continuation
    inviscid_cfl_only = true,
    use_line_search = true,
+   line_search_order = 1,
    use_physicality_check = true,
    allowable_relative_mass_change = 0.2,
-   min_relaxation_factor = 0.1,
+   min_relaxation_factor_for_update = 0.01,
+   min_relaxation_factor_for_cfl_growth = 0.1,
    relaxation_factor_reduction_factor = 0.7,
    use_residual_smoothing = false,
 
@@ -63,7 +66,9 @@ NewtonKrylovGlobalConfigHidden = {
    steps_between_loads_update = 20,
    write_snapshot_on_last_step = true,
    write_diagnostics_on_last_step = true,
+   write_loads_on_last_step = true,
    write_limiter_values = false,
+   write_residual_values = false,
    write_loads = false,
 
    __index = function (t, k)
@@ -110,18 +115,26 @@ local function writeNKConfigToFile(nkConfig, nkPhases, fileName)
    f:write(string.format('"cfl_reduction_factor": %.18e,\n', nkConfig.cfl_reduction_factor))
    -- phase control
    f:write(string.format('"number_of_phases": %d,\n', nkConfig.number_of_phases))
-   f:write('"phase_changes_at_steps": [')
-   for i,e in ipairs(nkConfig.phase_changes_at_steps) do
+   f:write('"max_steps_in_initial_phases": [')
+   for i,e in ipairs(nkConfig.max_steps_in_initial_phases) do
       f:write(string.format('%d', e))
-      if i < #(nkConfig.phase_changes_at_steps) then f:write(', ') end
+      if i < #(nkConfig.max_steps_in_initial_phases) then f:write(', ') end
+   end
+   f:write('],\n')
+   f:write('"phase_changes_at_relative_residual": [')
+   for i,e in ipairs(nkConfig.phase_changes_at_relative_residual) do
+      f:write(string.format('%.18e', e))
+      if i < #(nkConfig.phase_changes_at_relative_residual) then f:write(', ') end
    end
    f:write('],\n')
    -- Newton stepping control and continuation
    f:write(string.format('"inviscid_cfl_only": %s,\n', tostring(nkConfig.inviscid_cfl_only)))
    f:write(string.format('"use_line_search": %s,\n', tostring(nkConfig.use_line_search)))
+   f:write(string.format('"line_search_order": %d,\n', nkConfig.line_search_order))
    f:write(string.format('"use_physicality_check": %s,\n', tostring(nkConfig.use_physicality_check)))
    f:write(string.format('"allowable_relative_mass_change": %.18e,\n', nkConfig.allowable_relative_mass_change))
-   f:write(string.format('"min_relaxation_factor": %.18e,\n', nkConfig.min_relaxation_factor))
+   f:write(string.format('"min_relaxation_factor_for_update": %.18e,\n', nkConfig.min_relaxation_factor_for_update))
+   f:write(string.format('"min_relaxation_factor_for_cfl_growth": %.18e,\n', nkConfig.min_relaxation_factor_for_cfl_growth))
    f:write(string.format('"relaxation_factor_reduction_factor": %.18e,\n', nkConfig.relaxation_factor_reduction_factor))
    f:write(string.format('"use_residual_smoothing": %s,\n', tostring(nkConfig.use_residual_smoothing)))
    -- linear solver and preconditioner
@@ -143,7 +156,9 @@ local function writeNKConfigToFile(nkConfig, nkPhases, fileName)
    f:write(string.format('"steps_between_loads_update": %d,\n', nkConfig.steps_between_loads_update))
    f:write(string.format('"write_snapshot_on_last_step": %s,\n', tostring(nkConfig.write_snapshot_on_last_step)))
    f:write(string.format('"write_diagnostics_on_last_step": %s,\n', tostring(nkConfig.write_diagnostics_on_last_step)))
+   f:write(string.format('"write_loads_on_last_step": %s,\n', tostring(nkConfig.write_loads_on_last_step)))
    f:write(string.format('"write_limiter_values": %s,\n', tostring(nkConfig.write_limiter_values)))
+   f:write(string.format('"write_residual_values": %s,\n', tostring(nkConfig.write_residual_values)))
    f:write(string.format('"write_loads": %s,\n', tostring(nkConfig.write_loads)))
    -- write out phases
    for i=1,#nkPhases do
@@ -162,8 +177,11 @@ NewtonKrylovPhaseDefaults = {
    jacobian_interpolation_order = 2, -- documentation explanation.
    frozen_preconditioner = true,
    steps_between_preconditioner_update = 10,
+   enforce_linear_solver_tolerance = false,
    use_adaptive_preconditioner = false,
    ignore_stopping_criteria = true,
+   frozen_shock_detector = false,
+   frozen_limiter_for_residual = false,
    frozen_limiter_for_jacobian = false,
 
    -- Linear solver control
@@ -225,8 +243,11 @@ function NewtonKrylovPhase:tojson()
    str = str .. string.format('    "jacobian_interpolation_order": %d,\n', self.jacobian_interpolation_order)
    str = str .. string.format('    "frozen_preconditioner": %s,\n', tostring(self.frozen_preconditioner))
    str = str .. string.format('    "steps_between_preconditioner_update": %d,\n', self.steps_between_preconditioner_update)
+   str = str .. string.format('    "enforce_linear_solver_tolerance": %s,\n', tostring(self.enforce_linear_solver_tolerance))
    str = str .. string.format('    "use_adaptive_preconditioner": %s,\n', tostring(self.use_adaptive_preconditioner))
    str = str .. string.format('    "ignore_stopping_criteria": %s,\n', tostring(self.ignore_stopping_criteria))
+   str = str .. string.format('    "frozen_shock_detector": %s,\n', tostring(self.frozen_shock_detector))
+   str = str .. string.format('    "frozen_limiter_for_residual": %s,\n', tostring(self.frozen_limiter_for_residual))
    str = str .. string.format('    "frozen_limiter_for_jacobian": %s,\n', tostring(self.frozen_limiter_for_jacobian))
    str = str .. string.format('    "linear_solve_tolerance": %.18e,\n', self.linear_solve_tolerance)
    str = str .. string.format('    "use_auto_cfl": %s,\n', tostring(self.use_auto_cfl))

@@ -18,7 +18,7 @@ function FluidBlock:new(o)
    o = o or {}
    flag = checkAllowedNames(o, {"grid", "gridMetadata", "initialState", "fillCondition", "active",
                                 "label", "omegaz", "may_be_turbulent", "bcList", "bcDict",
-                                "hcellList", "xforceList", "fluidBlockArrayId"})
+                                "hcellList", "xforceList"})
    if not flag then
       error("Invalid name for item supplied to FluidBlock constructor.", 2)
    end
@@ -34,8 +34,6 @@ function FluidBlock:new(o)
       error('Have previously defined a FluidBlock with label "' .. o.label .. '"', 2)
    end
    fluidBlocksDict[o.label] = o.id
-   -- Set to -1 if NOT part of a fluid-block-array, otherwise use supplied value
-   o.fluidBlockArrayId = o.fluidBlockArrayId or -1
    -- Must have a grid and initialState
    assert(o.grid or o.gridMetadata, "need to supply a grid or its metadata")
    assert(o.initialState, "need to supply an initialState")
@@ -185,7 +183,6 @@ function FluidBlock:tojson()
    str = str .. string.format('    "type": "%s",\n', self.myType)
    str = str .. string.format('    "label": "%s",\n', self.label)
    str = str .. string.format('    "active": %s,\n', tostring(self.active))
-   str = str .. string.format('    "fluidBlockArrayId": %d,\n', self.fluidBlockArrayId)
    str = str .. string.format('    "omegaz": %.18e,\n', self.omegaz)
    str = str .. string.format('    "may_be_turbulent": %s,\n', tostring(self.may_be_turbulent))
    local grid_type
@@ -405,7 +402,10 @@ local function identifyBlockConnections(blockList, excludeList, tolerance, impor
    -- Put UFluidBlock objects into the exclude list because they don't
    -- have a simple topology that can always be matched to an SFluidBlock.
    for _,A in ipairs(myBlockList) do
-      if A.grid:get_type() == "unstructured_grid" then excludeList[#excludeList+1] = A end
+      if (A.grid and A.grid:get_type() == "unstructured_grid") or
+         (A.gridMetadata and A.gridMetadata.type == "unstructured_grid") then
+         excludeList[#excludeList+1] = A
+      end
    end
    tolerance = tolerance or 1.0e-6
    for _,A in ipairs(myBlockList) do

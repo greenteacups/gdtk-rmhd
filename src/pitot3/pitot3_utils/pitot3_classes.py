@@ -269,6 +269,45 @@ IdealGas = {{
 
     return ideal_gas_gmodel_filename
 
+def pitot3_species_MW_dict_loader(species_molecular_weights_filename):
+
+    import yaml
+
+    # some stuff I had to do get NO to load in yaml...
+    # from here https://stackoverflow.com/questions/36463531/pyyaml-automatically-converting-certain-keys-to-boolean-values
+
+    from yaml.loader import Reader, Scanner, Parser, Composer, SafeConstructor, Resolver
+
+    class StrictBoolSafeResolver(Resolver):
+        pass
+
+    # remove resolver entries for On/Off/Yes/No
+
+    for ch in "OoYyNn":
+        # this if statement below seems to be needed as when the function is ran a second time (i.e. scripted pitot runs)
+        # it rememebrs something and the species are already gone so it bails out. annoying, but that is Python for you.
+        if ch in StrictBoolSafeResolver.yaml_implicit_resolvers:
+            if len(StrictBoolSafeResolver.yaml_implicit_resolvers[ch]) == 1:
+                del StrictBoolSafeResolver.yaml_implicit_resolvers[ch]
+            else:
+                StrictBoolSafeResolver.yaml_implicit_resolvers[ch] = [x for x in
+                                                                      StrictBoolSafeResolver.yaml_implicit_resolvers[ch] if
+                                                                      x[0] != 'tag:yaml.org,2002:bool']
+
+
+    class StrictBoolSafeLoader(Reader, Scanner, Parser, Composer, SafeConstructor, StrictBoolSafeResolver):
+        def __init__(self, stream):
+            Reader.__init__(self, stream)
+            Scanner.__init__(self)
+            Parser.__init__(self)
+            Composer.__init__(self)
+            SafeConstructor.__init__(self)
+            StrictBoolSafeResolver.__init__(self)
+
+    species_molecular_weights_file = open(os.path.expandvars(species_molecular_weights_filename))
+    species_MW_dict = yaml.load(species_molecular_weights_file, Loader=StrictBoolSafeLoader)
+
+    return species_MW_dict
 
 def finite_wave_dp_wrapper(state1, v1, characteristic, p2, state2, gas_flow, steps=100,
                            gmodel_without_ions = None, cutoff_temp_for_no_ions = 5000.0, number_of_calculations = 10):
@@ -1139,7 +1178,8 @@ class Driver(object):
     Class to store and calculate facility driver information.
     """
 
-    def __init__(self, cfg, p_0 = None, T_0 = None, preset_gas_models_folder = None, outputUnits = 'massf', species_MW_dict = None, D_shock_tube = None):
+    def __init__(self, cfg, p_0 = None, T_0 = None, preset_gas_models_folder = None, outputUnits = 'massf',
+                 species_MW_dict = None, D_shock_tube = None, verbose = True):
         """
 
         :param cfg: Python dictionary which contains configuration information which is loaded into the class,
@@ -1270,18 +1310,22 @@ class Driver(object):
 
             # we guess 2000.0 K to start with...
 
-            print('-' * 60)
-            print("This driver specifies a4 instead of T4 so we need to iterate to find T4.")
-            print("Iterating to find T4 from a4.")
+            if verbose:
+
+                print('-' * 60)
+                print("This driver specifies a4 instead of T4 so we need to iterate to find T4.")
+                print("Iterating to find T4 from a4.")
 
             if 'T4_first_guess' not in cfg:
                 T4_first_guess = 2500.0
             else:
                 T4_first_guess = cfg['T4_first_guess']
 
-            print(f"Using a T4_first_guess of {T4_first_guess} K.")
 
-            print(f"a4 = {self.a4}")
+            if verbose:
+                print(f"Using a T4_first_guess of {T4_first_guess} K.")
+
+                print(f"a4 = {self.a4}")
 
             from scipy.optimize import newton
 
@@ -1303,20 +1347,23 @@ class Driver(object):
 
             def T4_eqn(T4, a4 = self.a4):
 
-                print('-'*60)
+                if verbose:
 
-                print(f"guessed T4 = {T4} K")
+                    print('-'*60)
 
-                print(f"related guessed a4 = {calculate_a4_eqn(T4)} m/s")
+                    print(f"guessed T4 = {T4} K")
 
-                print(f"actual a4 - guessed a4 = {self.a4 - calculate_a4_eqn(T4)}")
+                    print(f"related guessed a4 = {calculate_a4_eqn(T4)} m/s")
+
+                    print(f"actual a4 - guessed a4 = {self.a4 - calculate_a4_eqn(T4)}")
 
                 return self.a4 - calculate_a4_eqn(T4)
 
             T4 = newton(T4_eqn, T4_first_guess, tol = 1.0e-1)
 
-            print('-' * 60)
-            print(f"Final T4 = {T4:.2f} K")
+            if verbose:
+                print('-' * 60)
+                print(f"Final T4 = {T4:.2f} K")
 
             self.T4 = T4
 
@@ -1333,7 +1380,8 @@ class Driver(object):
             if 'driver_T' in cfg:
                 self.driver_T = float(cfg['driver_T'])
             else:
-                print(f"Setting driver temperature to the default value of {T:.2f} K")
+                if verbose:
+                    print(f"Setting driver temperature to the default value of {T:.2f} K")
                 self.driver_T = T_0
 
             # we call this state 4i
@@ -1369,16 +1417,16 @@ class Driver(object):
 
             if self.driver_condition_type == 'isentropic-compression-p4':
                 self.p4 = float(cfg['p4'])
-
-                print (f"Performing isentropic compression from the driver fill condition to {self.p4/1.0e6:.2f} MPa.")
+                if verbose:
+                    print (f"Performing isentropic compression from the driver fill condition to {self.p4/1.0e6:.2f} MPa.")
 
                 self.T4 = state4i.T * (self.p4 / state4i.p) ** (1.0 - (1.0 / gamma))  # K
 
             elif self.driver_condition_type == 'isentropic-compression-compression-ratio':
 
                 self.compression_ratio = cfg['compression_ratio']
-
-                print (f"Performing isentropic compression from driver fill condition over compression ratio of {self.compression_ratio}.")
+                if verbose:
+                    print (f"Performing isentropic compression from driver fill condition over compression ratio of {self.compression_ratio}.")
                 pressure_ratio =  self.compression_ratio**gamma #pressure ratio is compression ratio to the power of gamma
 
                 self.p4 = state4i.p*pressure_ratio
@@ -1434,7 +1482,20 @@ class Driver(object):
             reference_gas_state.update_thermo_from_pT()
             reference_gas_state.update_sound_speed()
 
-            reference_gas_state.gmodel = self.gmodel
+        except Exception as e:
+            if verbose:
+                print(e)
+
+            if self.driver_gas_model == 'CEAGas':
+                if verbose:
+                    print(
+                        "We failed to set the gas state using the standard gas model, so we will try a room temperature only gas model.")
+
+                reference_gas_state, room_temperature_only_gmodel = \
+                    room_temperature_only_gas_model_gas_state_setter(gas_state=reference_gas_state,
+                                                                     p=p_0, T=T_0,
+                                                                     original_gmodel_location=driver_gmodel_location,
+                                                                     room_temperature_only_gmodel=None)
 
         else:
 
@@ -1463,37 +1524,41 @@ class Driver(object):
         if 'M_throat' in cfg:
 
             self.M_throat = cfg['M_throat']
-
-            print(f'M_throat = {self.M_throat}')
+            if verbose:
+                print(f'M_throat = {self.M_throat}')
 
         elif 'M_throat' not in cfg and 'D_throat' in cfg and D_shock_tube:
             # we can calculate M_throat ourselves using the throat diameter and the shock tube diameter
 
             from gdtk.ideal_gas_flow import A_Astar
             from scipy.optimize import newton
-
-            print("Calculating M_throat from the provided D_throat and D_shock_tube values:")
+            if verbose:
+                print("Calculating M_throat from the provided D_throat and D_shock_tube values:")
 
             D_throat = cfg['D_throat']
             A_throat = (math.pi/4.0)*D_throat**2.0
 
             A_shock_tube = (math.pi/4.0)*D_shock_tube**2.0
 
-            print(f'D_throat = {D_throat} m ({D_throat*1000.0} mm)')
-            print(f'D_shock_tube = {D_shock_tube} m ({D_shock_tube*1000.0} mm)')
+            if verbose:
+                print(f'D_throat = {D_throat} m ({D_throat*1000.0} mm)')
+                print(f'D_shock_tube = {D_shock_tube} m ({D_shock_tube*1000.0} mm)')
 
-            print(f'A_throat = {A_throat:.2e} m**2 ({A_throat*1.0e6:.2f} mm**2)')
-            print(f'A_shock_tube = {A_shock_tube:.2e} m**2 ({A_shock_tube*1.0e6:.2f} mm**2)')
+                print(f'A_throat = {A_throat:.2e} m**2 ({A_throat*1.0e6:.2f} mm**2)')
+                print(f'A_shock_tube = {A_shock_tube:.2e} m**2 ({A_shock_tube*1.0e6:.2f} mm**2)')
 
             A_shock_tube_over_A_throat = A_shock_tube/A_throat
 
-            print(f"A_shock_tube / A_throat = {A_shock_tube_over_A_throat:.2f}")
+            if verbose:
+                print(f"A_shock_tube / A_throat = {A_shock_tube_over_A_throat:.2f}")
 
             M_throat_eqn = lambda M_throat : A_shock_tube_over_A_throat - A_Astar(M_throat, g=self.state4.get_gas_state().gamma)
 
             self.M_throat = newton(M_throat_eqn, 1.1)
+            self.D_throat = D_throat
 
-            print(f"Calculated M_throat = {self.M_throat:.2f}")
+            if verbose:
+                print(f"Calculated M_throat = {self.M_throat:.2f}")
 
         if self.M_throat > 0.0:
             self.driver_exit_state_name = '3s'
@@ -1535,6 +1600,21 @@ class Driver(object):
 
         return
 
+    def get_original_driver_config_dict(self):
+        """
+        Return the original driver config dict.
+
+        I did set this as a private variable as I don't necessarily
+        want people messing with it, but there might be a time when you want to
+        do something with it. This will return a copy of it to ensure
+        the original version is not messed with...
+        :return:
+        """
+
+        import copy
+
+        return copy.deepcopy(self.__cfg)
+
     def get_driver_condition_name(self):
         """
         Return the facility name
@@ -1557,6 +1637,18 @@ class Driver(object):
 
         return self.driver_exit_state_name
 
+    def get_compression_ratio(self):
+        """
+        Return the compression ratio value
+        :return:
+        """
+
+        if hasattr(self, 'compression_ratio'):
+            return self.compression_ratio
+        else:
+            print("This driver does not have compression_ratio specified. Will return None")
+            return None
+
     def get_M_throat(self):
         """
         Return the M_throat value
@@ -1564,6 +1656,18 @@ class Driver(object):
         """
 
         return self.M_throat
+
+    def get_D_throat(self):
+        """
+        Return the D_throat value
+        :return:
+        """
+
+        if hasattr(self, 'D_throat'):
+            return self.D_throat
+        else:
+            print("This driver does not have D_throat specified. Will return None")
+            return None
 
     def get_exit_state(self):
         """
@@ -1940,6 +2044,11 @@ class Facility_State(object):
 
         if self.get_gas_state_gmodel_type() == 'CEAGas':
             print(self.get_reduced_composition_two_line_output_string())
+
+            electron_number_density_output_string = self.get_electron_number_density_single_line_output_string(return_None_if_no_electrons=True)
+
+            if electron_number_density_output_string:
+                print(electron_number_density_output_string)
 
         # add the stagnation enthalpy, if we can:
         if self.reference_gas_state:
@@ -2393,13 +2502,11 @@ class Facility_State(object):
 
         if self.get_gas_state_gmodel_type() == 'CEAGas':
 
-            # start by getting the reduced mass fractions
-
             species_massf_dict = self.get_species_massf_dict()
 
             species_moles_dict = {}
 
-            gas_total_MW = self.get_molecular_mass()*1000.0 # to get into g/mol
+            gas_total_MW = self.get_molecular_mass()*1000.0 # to get into g/mol (or kg/kmol)
 
             for species in species_massf_dict:
                 mass_fraction = species_massf_dict[species]
@@ -2410,6 +2517,43 @@ class Facility_State(object):
                 species_moles_dict[species] = mole_fraction
 
             return species_moles_dict
+
+    def get_species_number_density_dict(self):
+        """
+        This is like the massf function above, but it converts the massf dictionary to number density in particles/m**3
+
+        :return:
+        """
+
+        if self.species_MW_dict:
+
+            from scipy.constants import N_A
+
+            N_A = N_A * 1000.0  # so I get this per kmol too
+
+            species_massf_dict = self.get_species_massf_dict()
+
+            species_number_density_dict = {}
+
+            rho = self.get_gas_state().rho #kg/m**3
+
+            for species in species_massf_dict:
+                mass_fraction = species_massf_dict[species]
+                species_MW = self.species_MW_dict[species]
+
+                rho_species = rho*mass_fraction # this is partial density (like partial pressure but mass base)
+
+                # from here http://stcorp.github.io/harp/doc/html/algorithms/derivations/number_density.html
+
+                n = (rho_species * N_A) / species_MW
+
+                species_number_density_dict[species] = n
+
+            return species_number_density_dict
+
+        else:
+            print("We do not have a species MW dict so this can't be done. Will return None.")
+            return None
 
     def get_reduced_species_massf_dict(self):
         """
@@ -2422,7 +2566,7 @@ class Facility_State(object):
         """
 
         if self.get_gas_state_gmodel_type() == 'CEAGas':
-            # a fill state will not have many different species, so we should just the species which actually exist
+            # a fill state will not have many different species, so we should just keep the species which actually exist
             species_massf_dict = self.get_species_massf_dict()
             reduced_species_massf_dict = {}
             for species in species_massf_dict.keys():
@@ -2443,34 +2587,14 @@ class Facility_State(object):
         """
 
         if self.get_gas_state_gmodel_type() == 'CEAGas':
+            # a fill state will not have many different species, so we should just keep the species which actually exist
+            species_moles_dict = self.get_species_moles_dict()
+            reduced_species_moles_dict = {}
+            for species in species_moles_dict.keys():
+                if species_moles_dict[species] > 0.0:
+                    reduced_species_moles_dict[species] = species_moles_dict[species]
 
-            # # start by getting the reduced mass fractions
-            #
-            # reduced_species_massf_dict = self.get_reduced_species_massf_dict()
-            #
-            # reduced_species_moles_dict = {}
-            #
-            # gas_total_MW = self.get_molecular_mass()*1000.0 # to get into g/mol
-            #
-            # for species in reduced_species_massf_dict:
-            #     mass_fraction = reduced_species_massf_dict[species]
-            #     species_MW = self.species_MW_dict[species]
-            #
-            #     mole_fraction = mass_fraction*(gas_total_MW/species_MW)
-            #
-            #     reduced_species_moles_dict[species] = mole_fraction
-            #
-            # return reduced_species_moles_dict
-
-            if self.get_gas_state_gmodel_type() == 'CEAGas':
-                # a fill state will not have many different species, so we should just the species which actually exist
-                species_moles_dict = self.get_species_moles_dict()
-                reduced_species_moles_dict = {}
-                for species in species_moles_dict.keys():
-                    if species_moles_dict[species] > 0.0:
-                        reduced_species_moles_dict[species] = species_moles_dict[species]
-
-                return reduced_species_moles_dict
+            return reduced_species_moles_dict
 
         else:
             print("GasModel is not a CEAGas, so this function isn't useful. Will return None.")
@@ -2521,6 +2645,58 @@ class Facility_State(object):
             output_string = f"{{'{species}': {species_value}}}"
 
         return output_string
+
+    def get_reduced_species_number_density_dict(self):
+        """
+        This is like the function above, but for number densities.
+
+        :return:
+        """
+
+        if self.get_gas_state_gmodel_type() == 'CEAGas':
+            # a fill state will not have many different species, so we should just keep the species which actually exist
+            species_number_density_dict = self.get_species_number_density_dict()
+            reduced_species_number_density_dict = {}
+            for species in species_number_density_dict.keys():
+                if species_number_density_dict[species] > 0.0:
+                    reduced_species_number_density_dict[species] = species_number_density_dict[species]
+
+            return reduced_species_number_density_dict
+
+        else:
+            print("GasModel is not a CEAGas, so this function isn't useful. Will return None.")
+            return None
+
+    def get_electron_number_density(self):
+        """ Function to return the electron number density. If it is zero or there are not electrons, it just returns 0.0"""
+
+        if self.get_gas_state_gmodel_type() == 'CEAGas':
+
+            species_number_density_dict = self.get_species_number_density_dict()
+
+            if 'e-' in species_number_density_dict:
+                electron_number_density = species_number_density_dict['e-']
+            else:
+                electron_number_density = 0.0
+
+        else:
+            electron_number_density = 0.0
+
+        return electron_number_density
+
+    def get_electron_number_density_single_line_output_string(self, optional_description = None, return_None_if_no_electrons = False):
+
+        electron_number_density = self.get_electron_number_density()
+
+        if optional_description:
+            electron_number_density_output_string = f"Electron number density {optional_description} at equilibrium is {electron_number_density:.4e} particles / m**3 ({electron_number_density / 1.0e6:.4e} particles / cm**3)"
+        else:
+            electron_number_density_output_string = f"Electron number density at equilibrium is {electron_number_density:.4e} particles / m**3 ({electron_number_density / 1.0e6:.4e} particles / cm**3)"
+
+        if not electron_number_density and return_None_if_no_electrons:
+            electron_number_density_output_string = None
+
+        return electron_number_density_output_string
 
     def get_reduced_composition(self):
         """
@@ -2685,7 +2861,7 @@ class Tube(object):
     def __init__(self, tube_name, tube_length, tube_diameter, fill_pressure, fill_temperature, fill_gas_model, fill_gas_name, fill_gas_filename,
                  fill_state_name, shocked_fill_state_name, entrance_state_name, entrance_state, unsteadily_expanded_entrance_state_name,
                  expand_to, expansion_factor,
-                 preset_gas_models_folder, unsteady_expansion_steps, vs_guess_1, vs_guess_2, vs_limits, vs_tolerance,
+                 preset_gas_models_folder, unsteady_expansion_steps, vs_guess_1, vs_guess_2, vs_limits, vs_tolerance, vs_max_iterations,
                  outputUnits = 'massf', species_MW_dict = None):
 
         self.tube_name = tube_name
@@ -2723,16 +2899,48 @@ class Tube(object):
         else:
             fill_room_temperature_only_gmodel_location = None
 
-        fill_gmodel = GasModel(os.path.expandvars(fill_gmodel_location))
+        if os.path.isfile(os.path.expandvars(fill_gmodel_location)):
+            fill_gmodel = GasModel(os.path.expandvars(fill_gmodel_location))
+        elif not os.path.isfile(os.path.expandvars(fill_gmodel_location)) and self.fill_gas_model == 'CEAGas' and self.fill_gas_name:
+            print(f"The PITOT3 pre-set gas models folder is {preset_gas_models_folder}")
+            print(f"Your selected pre-set CEAGas gas model of '{self.fill_gas_name}' does not appear to exist in that folder.")
+            print("Below is the list of pre-set CEAGas gas models in that folder. Are you sure you didn't mean one of those instead?")
 
-        if fill_room_temperature_only_gmodel_location and os.path.exists(os.path.expandvars(fill_room_temperature_only_gmodel_location)):
+            preset_gas_model_files = os.listdir(os.path.expandvars(preset_gas_models_folder))
 
-            # if there is a room temperature only object we "trick" the fill state gas model to use that when it sets the gas
-            # state and then replace the correct gas state after. This seemed to be the best / cleanest way to do it.
+            preset_gas_model_files.sort()
 
-            fill_room_temperature_only_gmodel = GasModel(os.path.expandvars(fill_room_temperature_only_gmodel_location))
+            for preset_gas_model_filename in preset_gas_model_files:
+                if 'cea' in preset_gas_model_filename:
+                    # remove the cea part
+                    preset_gas_model_filename_cutdown = preset_gas_model_filename.replace('cea-', '')
+                    # remove the gas-model and .lua part
+                    preset_gas_model_filename_cutdown = preset_gas_model_filename_cutdown.replace('-gas-model.lua', '')
 
-            fill_state_gas_object = GasState(fill_gmodel)
+                    print(f"'{preset_gas_model_filename_cutdown}' ('{preset_gas_model_filename}')")
+
+            raise Exception(f"Tube: Selected preset gas model ('{self.fill_gas_name}') for the {self.tube_name} does not appear to exist in the preset gas models folder.")
+
+        elif not os.path.isfile(os.path.expandvars(fill_gmodel_location)) and self.fill_gas_model == 'custom' and self.fill_gas_filename:
+
+            print(f"Your selected fill gas filename ('{self.fill_gas_filename}') does not appear to exist.")
+            print("Below is the list of files in your current working directory. Are you sure you didn't mean one of these files?")
+
+            cwd_files = os.listdir('.')
+
+            cwd_files.sort()
+
+            for filename in cwd_files:
+                print(filename)
+
+            raise Exception(f"Tube: Specified fille gas filename for the {self.tube_name} does not exist in the location the user has specified.")
+
+        else:
+            raise Exception(f"Tube: There is some issue loading the gas model for the {self.tube_name}.")
+
+
+
+        fill_state_gas_object = GasState(fill_gmodel)
 
             fill_state_gas_object.gmodel = fill_room_temperature_only_gmodel
 
@@ -2786,6 +2994,7 @@ class Tube(object):
         self.vs_guess_2 = vs_guess_2
         self.vs_limits = vs_limits
         self.vs_tolerance = vs_tolerance
+        self.vs_max_iterations = vs_max_iterations
 
         return
 
@@ -2858,7 +3067,21 @@ class Tube(object):
         print(self.unsteadily_expanding_state)
 
         # calculate the shock speed using a secant solver
-        self.vs = secant(error_in_velocity_function, self.vs_guess_1, self.vs_guess_2, limits = self.vs_limits, tol=self.vs_tolerance)
+        try:
+            self.vs = secant(error_in_velocity_function, self.vs_guess_1, self.vs_guess_2, limits = self.vs_limits,
+                             tol=self.vs_tolerance, max_iterations = self.vs_max_iterations)
+        except Exception as e:
+            print(e)
+            if 'Did not converge after ' in e.args:
+                print("Shock speed calculation did not converge")
+                print("This happens sometimes so we'll give it a go one more time with a slightly lower tolerance.")
+
+                new_vs_tolerance = self.vs_tolerance*10.0
+
+                print(f"The old tolerance was {self.vs_tolerance}, the new tolerance is {new_vs_tolerance}.")
+
+                self.vs = secant(error_in_velocity_function, self.vs_guess_1, self.vs_guess_2, limits=self.vs_limits,
+                                 tol=new_vs_tolerance, max_iterations=self.vs_max_iterations)
 
         self.Ms = self.vs / self.fill_state.get_gas_state().a
 
@@ -3336,11 +3559,11 @@ class Nozzle(object):
 
             entrance_gas_state = self.entrance_state.get_gas_state()
 
-            # setting it to 1.01 as we want it to be above 1 so it supersonic!
+            # setting it to 1.02 as we want it to be above 1 so it supersonic!
             # (the p0/p is ideal gas).
-            # We also have some code to catch up if it ends up subsonic below too
+            # We also have some code to catch up if it ends up a bit subsonic below too
             v6 = entrance_state_gas_flow_object.expand_from_stagnation(entrance_gas_state,
-                                                                       1.0 / p0_p(1.01, entrance_gas_state.gamma),
+                                                                       1.0 / p0_p(1.02, entrance_gas_state.gamma),
                                                                        state6)
 
             M6 = v6 / state6.a
@@ -4270,6 +4493,11 @@ def pitot3_results_output(config_data, gas_path, object_dict, generate_output_fi
             print(f"Species in the shock layer at equilibrium ({test_section.get_post_normal_shock_state().get_state_name()}) (by {test_section.get_post_normal_shock_state().outputUnits}):",
                   file=output_stream)
             print(test_section.get_post_normal_shock_state().get_reduced_species_moles_dict_for_printing(), file=output_stream)
+
+            electron_number_density_output_string = \
+                test_section.get_post_normal_shock_state().get_electron_number_density_single_line_output_string(optional_description = 'in the shock layer')
+
+            print(electron_number_density_output_string, file=output_stream)
 
     # some extra stuff at the bottom here, we make a states dict so we can return it later on...
 

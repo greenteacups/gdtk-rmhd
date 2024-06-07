@@ -1,5 +1,5 @@
 /** flowsolution.d
- * Eilmer4 compressible-flow simulation code, postprocessing functions.
+ * Eilmer compressible-flow simulation code, postprocessing functions.
  *
  * The role of the post-processing functions is just to pick up data
  * from a previously-run simulation and either write plotting files
@@ -57,22 +57,13 @@ class FlowSolution {
     // The collection of flow blocks and grid blocks that define the flow
     // and the domain at one particular instant in time.
 public:
-    double sim_time;
+    double simTime;
     size_t nBlocks;
-    string grid_format;
     GridMotion grid_motion;
     FluidBlockLite[] flowBlocks;
     Grid[] gridBlocks;
 
-    this(string jobName, string dir, int tindx, size_t nBlocks, int gindx=-1,
-         string flow_format="", string tag="", int make_kdtree=0)
-    {
-	// PLACEHOLDER for transient mode constructor
-    }
-
-
-    // A constructor for flow fields when running steady mode
-    this(int snapshot, size_t nBlocks, string dir=".", bool make_kdtree=true)
+    this(int snapshot, size_t nBlocks, double simTime=-1.0, string dir=".", bool make_kdtree=true)
     {
         string cfgFile = (dir == ".") ? lmrCfg.cfgFile : dir ~ "/" ~ lmrCfg.cfgFile;
         string content;
@@ -89,13 +80,16 @@ public:
             writeln("Message is: ", e.msg);
             throw new Error(text("Failed to parse JSON from config file: ", cfgFile));
         }
-        string flowFmt = jsonData["flow_format"].str;
-	string gridFmt = jsonData["grid_format"].str;
+        string fieldFmt = jsonData["field_format"].str;
+        GlobalConfig.field_format = fieldFmt;
+        string gridFmt = jsonData["grid_format"].str;
+        GlobalConfig.grid_format = gridFmt;
+        grid_motion = grid_motion_from_name(jsonData["grid_motion"].str);
         // -- end initialising from JSONData
 
-	// Find out variables from metadata file
-        string flowMetadataFile = (dir == ".") ? lmrCfg.flowMetadataFile : dir ~ "/" ~ lmrCfg.flowMetadataFile;
-	auto variables = readFlowVariablesFromFlowMetadata(flowMetadataFile);
+	    // Find out variables from metadata file
+        string fluidMetadataFile = (dir == ".") ? lmrCfg.fluidMetadataFile : dir ~ "/" ~ lmrCfg.fluidMetadataFile;
+        auto variables = readFluidVariablesFromFluidMetadata(fluidMetadataFile);
         //
         // Use <block-list-filename> to get a hint of the type of each block.
         string blkListFile = (dir == ".") ? lmrCfg.blkListFile : dir ~ "/" ~ lmrCfg.blkListFile;
@@ -107,14 +101,20 @@ public:
             int ib_chk;
             string gridTypeName;
             string label;
-	    int ncells;
+            int ncells;
             formattedRead(listFileLine, " %d %s %s %d", &ib_chk, &gridTypeName, &label, &ncells);
             if (ib != ib_chk) {
                 string msg = format("Reading %s file ib=%d ib_chk=%d", blkListFile, ib, ib_chk);
                 throw new FlowSolverException(msg);
             }
             auto gridType = gridTypeFromName(gridTypeName);
-            string gName = gridFilename(lmrCfg.initialFieldDir, to!int(ib));
+            string gName;
+            if (grid_motion != GridMotion.none) {
+                gName = gridFilename(snapshot, to!int(ib));
+            }
+            else {
+                gName = gridFilename(lmrCfg.initialFieldDir, to!int(ib));
+            }
             gName = (dir == ".") ? gName : dir ~ "/" ~ gName;
             final switch (gridType) {
             case Grid_t.structured_grid:
@@ -124,12 +124,25 @@ public:
                 gridBlocks ~= new UnstructuredGrid(gName, gridFmt, false);
             }
             gridBlocks[$-1].sort_cells_into_bins();
-            string fName = flowFilename(snapshot, to!int(ib));
+            string fName = fluidFilename(snapshot, to!int(ib));
             fName = (dir == ".") ? fName : dir ~ "/" ~ fName;
-            flowBlocks ~= new FluidBlockLite(fName, ib, jsonData, gridType, flowFmt, variables, ncells);
+            auto fb = new FluidBlockLite(fName, ib, simTime, jsonData, gridType, fieldFmt, variables, ncells);
+            final switch (gridType) {
+            case Grid_t.structured_grid:
+                auto g = gridBlocks[$-1];
+                fb.nic = g.niv - 1;
+                fb.njc = g.njv - 1;
+                fb.nkc = max(g.nkv-1, 1);
+                break;
+            case Grid_t.unstructured_grid:
+                fb.nic = ncells;
+                fb.njc = 1;
+                fb.nkc = 1;
+            }
+            flowBlocks ~= fb;
         } // end foreach ib
         this.nBlocks = nBlocks;
-        sim_time = -1.0; // For steady-state signal no meaningful time with -1.0
+        this.simTime = simTime;
 
         if (make_kdtree) {
             construct_kdtree();
@@ -391,12 +404,12 @@ private:
     Node[] nodes;
     Node* root;
 
-    void construct_kdtree() {
-    /*
-        Assemble the cells in this flow solution into a kdtree for fast nearest neighbour matching.
-
-        @author: Nick Gibbons
+   /**
+    * Assemble the cells in this flow solution into a kdtree for fast nearest neighbour matching.
+    *
+    *   @author: Nick Gibbons
     */
+    void construct_kdtree() {
         // Avoid use of ~= by preallocating the nodes array, since it could get quite large.
         size_t totalcells = 0;
         foreach (ib; 0 .. nBlocks) totalcells += gridBlocks[ib].ncells;
@@ -441,7 +454,7 @@ public:
     string[] bcGroups;
     string[] variableNames;
     size_t[string] variableIndex;
-    double sim_time;
+    double simTime;
     string flow_format;
     double omegaz; // Angular velocity (in rad/s) of the rotating frame.
                    // There is only one component, about the z-axis.
@@ -460,24 +473,27 @@ public:
     this(size_t blkID, JSONValue jsonData, Grid_t gridType, string flow_format) {
         this.gridType = gridType;
         this.flow_format = flow_format;
-        // Fill boundary group list
         JSONValue jsonDataForBlk = jsonData["block_" ~ to!string(blkID)];
-        size_t nboundaries = getJSONint(jsonDataForBlk, "nboundaries", 0);
-        for (size_t i=0; i < nboundaries; i++) {
-            auto myGroup = getJSONstring(jsonDataForBlk["boundary_" ~ to!string(i)], "group", "");
-            bcGroups ~= myGroup;
+        // Fill boundary group list if unstructured
+        if (gridType == Grid_t.unstructured_grid) {
+            size_t nboundaries = getJSONint(jsonDataForBlk, "nboundaries", 0);
+            for (size_t i=0; i < nboundaries; i++) {
+                auto myGroup = getJSONstring(jsonDataForBlk["boundary_" ~ to!string(i)], "group", "");
+                bcGroups ~= myGroup;
+            }
         }
         // rotating-frame angular velocity
         omegaz = getJSONdouble(jsonDataForBlk, "omegaz", 0.0);
     } // end "partial" constructor
 
-    this(string filename, size_t blkID, JSONValue jsonData, Grid_t gridType, string flow_format, string[] variables, int ncells)
+    this(string filename, size_t blkID, double simTime, JSONValue jsonData, Grid_t gridType, string flow_format, string[] variables, int ncells)
     {
-	variableNames = variables.dup;
-	foreach (i, var; variables) variableIndex[var] = i;
-	this.ncells = ncells;
+        this.simTime = simTime;
+        variableNames = variables.dup;
+        foreach (i, var; variables) variableIndex[var] = i;
+        this.ncells = ncells;
         this(blkID, jsonData, gridType, flow_format);
-        this.readFlowVariablesFromFile(filename, variables, ncells);
+        this.readFluidVariablesFromFile(filename, variables, ncells);
     } // end constructor from file
 
     this(ref const(FluidBlockLite) other, size_t[] cellList, size_t new_dimensions,
@@ -493,7 +509,7 @@ public:
         omegaz = other.omegaz;
         ncells = cellList.length;
         nic = new_nic; njc = new_njc; nkc = new_nkc;
-        sim_time = other.sim_time;
+        simTime = other.simTime;
         variableNames = other.variableNames.dup();
         foreach(i, var; variableNames) { variableIndex[var] = i; }
         _data.length = ncells;
@@ -567,13 +583,15 @@ public:
         // We assume a lot about the data that has been read in so,
         // we need to skip this function if all is not in place
         bool ok_to_proceed = true;
-        foreach (name; ["pos.x", "pos.y", "a", "rho", "p", "vel.x", "vel.y", "vel.z", "u"]) {
+        foreach (name; ["pos.x", "pos.y", "a", "rho", "p", "vel.x", "vel.y", "e"]) {
             if (!canFind(variableNames, name)) { ok_to_proceed = false; }
         }
         if (!ok_to_proceed) {
             writeln("FluidBlockLite.add_aux_variables(): Some essential variables not found.");
             return;
         }
+        bool threeD = canFind(variableNames, "pos.z");
+        //
         bool add_nrf_velocities = canFind(addVarsList, "nrf"); // nonrotating-frame velocities
         bool add_cyl_coords = canFind(addVarsList, "cyl"); // cylindrical coordinates, r and theta
         bool add_mach = canFind(addVarsList, "mach");
@@ -660,7 +678,7 @@ public:
         foreach (i; 0 .. ncells) {
             double x = _data[i][variableIndex["pos.x"]];
             double y = _data[i][variableIndex["pos.y"]];
-            double z = _data[i][variableIndex["pos.z"]];
+            double z = (threeD) ? _data[i][variableIndex["pos.z"]] : 0.0;
             double a = _data[i][variableIndex["a"]];
             double p = _data[i][variableIndex["p"]];
             double rho = _data[i][variableIndex["rho"]];
@@ -670,7 +688,7 @@ public:
             // may be rotating for turbomachinery calculations.
             double wx = _data[i][variableIndex["vel.x"]];
             double wy = _data[i][variableIndex["vel.y"]];
-            double wz = _data[i][variableIndex["vel.z"]];
+            double wz = (threeD) ? _data[i][variableIndex["vel.z"]] : 0.0;
             double w = sqrt(wx*wx + wy*wy + wz*wz);
             double M = w/a;
             if (add_cyl_coords) {
@@ -718,7 +736,7 @@ public:
                 _data[i] ~= total_p;
             }
             if (add_total_h) {
-                double e0 = _data[i][variableIndex["u"]];
+                double e0 = _data[i][variableIndex["e"]];
                 double tke;
 		double e_int = 0.0;
                 if (canFind(variableNames, "tke")) {
@@ -726,14 +744,14 @@ public:
                 } else {
                     tke = 0.0;
                 }
-		// We need to be greedy: search for as many u_modes as you can find.
+		// We need to be greedy: search for as many e_modes as we can find.
 		// And tally into e_int.
 		int imode = 0;
-		string u_mode_str = "u_modes[0]";
-		while (canFind(variableNames, u_mode_str)) {
-		    e_int += _data[i][variableIndex[u_mode_str]];
+		string e_mode_str = "e_modes[0]";
+		while (canFind(variableNames, e_mode_str)) {
+		    e_int += _data[i][variableIndex[e_mode_str]];
 		    imode++;
-		    u_mode_str = format("u_modes[%d]", imode);
+		    e_mode_str = format("e_modes[%d]", imode);
 		}
 		// Sum up the bits of energy.
                 double total_h = p/rho + e0 + e_int + 0.5*w*w + tke;
@@ -803,7 +821,7 @@ public:
             // Call back to the Lua function to get a table of values.
             // function refSoln(x, y, z)
             lua_getglobal(L, luaFnName.toStringz);
-            lua_pushnumber(L, sim_time);
+            lua_pushnumber(L, simTime);
             lua_pushnumber(L, _data[i][variableIndex["pos.x"]]);
             lua_pushnumber(L, _data[i][variableIndex["pos.y"]]);
             if (GlobalConfig.dimensions == 3) {

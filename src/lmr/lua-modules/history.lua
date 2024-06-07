@@ -5,6 +5,17 @@
 
 local history = {}
 
+local lmrconfig = require 'lmrconfig'
+local globalconfig = require 'globalconfig'
+config = globalconfig.config
+
+function file_exists(name)
+   -- Utility function copied from
+   -- https://stackoverflow.com/questions/4990990/check-if-a-file-exists-with-lua
+   local f = io.open(name, "r")
+   return f ~= nil and io.close(f)
+end
+
 function history.setHistoryPoint(args)
    -- Accepts a variety of arguments:
    --  1. x, y, z coordinates
@@ -28,12 +39,21 @@ function history.setHistoryPoint(args)
       local blkId = 0
       local cellId = 0
       for ib,blk in ipairs(fluidBlocks) do
-	 local indx, dist = blk.grid:find_nearest_cell_centre{x=x, y=y, z=z}
-	 if (dist < minDist) then
-	    minDist = dist
-	    blkId = ib
-	    cellId = indx
-	 end
+         if (blk.grid == nil) then
+            -- Likely we've initialised only based on metadata
+            if (blk.gridMetadata['type'] == 'structured_grid') then
+               blk.grid = StructuredGrid:new{filename=lmrconfig.gridFilename(blk.id), fmt=config.grid_format}
+            end
+            if (blk.gridMetadata['type'] == 'unstructured_grid') then
+               blk.grid = UnstructuredGrid:new{filename=lmrconfig.gridFilename(blk.id), fmt=config.grid_format}
+            end
+         end
+         local indx, dist = blk.grid:find_nearest_cell_centre{x=x, y=y, z=z}
+         if (dist < minDist) then
+            minDist = dist
+            blkId = ib
+	          cellId = indx
+	       end
       end
       -- Convert blkId to 0-offset
       blkId = blkId - 1
@@ -46,21 +66,20 @@ function history.setHistoryPoint(args)
       local i = args.i
       local j = args.j
       local k = args.k or 0
-      local nic = fluidBlocks[ib+1].nic
-      local njc = fluidBlocks[ib+1].njc
-      local nkc = fluidBlocks[ib+1].nkc
-      -- Check indices are valid.
+      local blk = fluidBlocks[ib+1] -- one-based block array
+      local nic = blk.nic
+      local njc = blk.njc
+      local nkc = blk.nkc
+      -- Allow the user to specify the last index value in each direction
+      -- by simply clipping the index values to actual range in the grid
       if i >= nic then
-         errMsg = string.format("setHistoryPoint: i value invalid; valid i --> 0 <= i < nic.\n i= %d, nic= %d", i, nic)
-         error(errMsg, 2)
+         i = nic-1
       end
       if j >= njc then
-         errMsg = string.format("setHistoryPoint: j value invalid. valid j --> 0 <= j < njc.\n j= %d, njc= %d", j, njc)
-         error(errMsg, 2)
+         j = njc-1
       end
       if k >= nkc then
-         errMsg = string.format("setHistoryPoint: k value invalid. valid k --> 0 <= k < nkc. \n k= %d, nkc= %d", k, nkc)
-         error(errMsg, 2)
+         k = nkc-1
       end
       -- Convert back to single_index
       local cellId = k * (njc * nic) + j * nic + i
@@ -80,9 +99,30 @@ function history.setHistoryPoint(args)
    local n = #historyCells
    local ib = historyCells[n].ib -- zero-based block index
    local i = historyCells[n].i
-   local pos = fluidBlocks[ib+1].grid:cellCentroid(i) -- one-based block array
+   local blk = fluidBlocks[ib+1] -- one-based block array
+   if (blk.grid == nil) then
+      -- Likely we've initialised only based on metadata
+      if (blk.gridMetadata['type'] == 'structured_grid') then
+         blk.grid = StructuredGrid:new{filename=lmrconfig.gridFilename(blk.id), fmt=config.grid_format}
+      end
+      if (blk.gridMetadata['type'] == 'unstructured_grid') then
+         blk.grid = UnstructuredGrid:new{filename=lmrconfig.gridFilename(blk.id), fmt=config.grid_format}
+      end
+   end
+   local pos = blk.grid:cellCentroid(i)
    print(string.format("Fluid History point [%d] ib=%d i=%d x=%g y=%g z=%g",
                        n, ib, i, pos.x, pos.y, pos.z))
+   local fhpfile = "./lmrsim/fluid-history-points.list"
+   if not file_exists(fhpfile) then
+      local file = io.open(fhpfile, "w")
+      file:write("blockid cellid pos.x pos.y pos.z\n")
+      file:close()
+   end
+   if file_exists(fhpfile) then
+      local file = io.open(fhpfile, "a")
+      file:write(string.format("%d %d %g %g %g\n", ib, i, pos.x, pos.y, pos.z))
+      file:close()
+   end
    return
 end
 

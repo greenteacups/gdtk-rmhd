@@ -20,38 +20,77 @@ import std.regex;
 import std.algorithm;
 import std.array;
 import std.math;
+import std.json;
+import std.file : readText;
 
 import util.lua;
 import geom;
 import gzip;
 import fileutil;
 import globalconfig;
+import lmrconfig;
+import blockio : readVariablesFromMetadata, readSolidVariablesFromFile;
 
 class SolidSolution {
     // This holds the collection of solid blocks and solid grid blocks
     // that define the solid domain at a particular instant in time.
 public:
-    double sim_time;
+    double simTime;
     size_t nBlocks;
-    SBlockSolid[] solidBlocks;
+    SolidBlockLite[] solidBlocks;
     StructuredGrid[] gridBlocks;
 
-    this(string jobName, string dir, int tindx, size_t nBlocks)
+    this(int snapshot, size_t nBlocks, double simTime=-1.0, string dir=".")
     {
-        foreach (int ib; GlobalConfig.nFluidBlocks .. GlobalConfig.nBlocks) {
-            string fileName;
-            // Presently, don't allow moving grid for solid domain,
-            // so tindx is always 0 for solid-grid
-            fileName = make_file_name!"solid-grid"(jobName, to!int(ib), 0, "gz");
-            fileName = dir ~ "/" ~ fileName;
-            gridBlocks ~= new StructuredGrid(fileName, "gziptext");
-            fileName = make_file_name!"solid"(jobName, to!int(ib), tindx, "gz");
-            fileName = dir ~ "/" ~ fileName;
-            solidBlocks ~= new SBlockSolid(fileName);
-        } // end foreach ib
+        size_t nFluidBlocks = GlobalConfig.nFluidBlocks;
+        // We'll open the config file ourselves to read
+        // rather than invoke the entire readConfig()
+        // because we just want two things:
+        //   1. field_format; and
+        //   2. grid_format
+        string cfgFile =  dir ~ "/" ~ lmrCfg.cfgFile;
+        string content;
+        try {
+            content = readText(cfgFile);
+        }
+        catch (Exception e) {
+            writeln("Message is: ", e.msg);
+            throw new Error(text("Failed to read config file: ", cfgFile));
+        }
+        JSONValue jsonData;
+        try {
+            jsonData = parseJSON!string(content);
+        }
+        catch (Exception e) {
+            writeln("Message is: ", e.msg);
+            throw new Error(text("Failed to parse JSON from config file: ", cfgFile));
+        }
+        string fieldFmt = jsonData["field_format"].str;
+        GlobalConfig.field_format = fieldFmt;
+        string gridFmt = jsonData["grid_format"].str;
+        GlobalConfig.grid_format = gridFmt;
+
+        // Find variables from metadata file
+        string solidMetadataFile = dir ~ "/" ~ lmrCfg.solidMetadataFile;
+        auto variables = readVariablesFromMetadata(solidMetadataFile);
+
+        foreach (ib; 0 .. nBlocks) {
+            auto bid = ib + nFluidBlocks;
+            string gName = dir ~ "/" ~ gridFilename(lmrCfg.initialFieldDir, to!int(bid));
+            gridBlocks ~= new StructuredGrid(gName, gridFmt);
+            auto g = gridBlocks[$-1];
+            g.sort_cells_into_bins();
+            int ncells = to!int(g.ncells);
+            string sName = dir ~ "/" ~ solidFilename(snapshot, to!int(bid));
+            auto sb = new SolidBlockLite(sName, simTime, fieldFmt, variables, ncells);
+            sb.nic = g.niv - 1;
+            sb.njc = g.njv - 1;
+            sb.nkc = max(g.nkv - 1, 1);
+            solidBlocks ~= sb;
+        }
         this.nBlocks = nBlocks;
-        sim_time = solidBlocks[0].sim_time;
-    } // end constructor
+        this.simTime = simTime;
+    }
 
     size_t[] find_enclosing_cell(ref const(Vector3) p)
     {
@@ -170,11 +209,11 @@ public:
                     foreach (i; 0 .. solid.nic) {
                         double x = solidBlocks[ib]["pos.x", i, j, k];
                         double y = solidBlocks[ib]["pos.y", i, j, k];
-                        double z = solidBlocks[ib]["pos.z", i, j, k];
+                        double z = (GlobalConfig.dimensions == 3) ? solidBlocks[ib]["pos.z", i, j, k] : 0.0;
                         if (limitRegion && 
                             (x < x0 || y < y0 || z < z0 ||
                              x > x1 || y > y1 || z > z1)) continue;
-                        double volume = solidBlocks[ib]["volume", i, j, k];
+                        double volume = solidBlocks[ib]["vol", i, j, k];
                         double value = solidBlocks[ib][varName, i, j, k];
                         volume_sum += volume;
                         L1 += volume * abs(value);
@@ -206,53 +245,38 @@ public:
 
 } // end class SolidSolution
 
-class SBlockSolid {
+class SolidBlockLite {
 public:
+    double[][] data; // public because we read into it in blockio module.
+    double simTime;
+    size_t ncells;
     size_t nic;
     size_t njc;
     size_t nkc;
     string[] variableNames;
     size_t[string] variableIndex;
+    string fieldFmt;
     double sim_time;
 
-    this(string filename)
+    size_t single_index(size_t i, size_t j, size_t k=0) const
+    in {
+        assert (i < nic, text("index i=", i, " is invalid, nic=", nic));
+        assert (j < njc, text("index j=", j, " is invalid, njc=", njc));
+        assert (k < nkc, text("index k=", k, " is invalid, nkc=", nkc));
+    }
+    do {
+        return i + nic*(j + njc*k);
+    }
+
+    this(string filename, double simTime, string fieldFmt, string[] variables, int ncells)
     {
-        // Read in the flow data for a single structured block.
-        string[] tokens;
-        auto byLine = new GzipByLine(filename);
-        auto line = byLine.front; byLine.popFront();
-        formattedRead(line, " %g", &sim_time);
-        line = byLine.front; byLine.popFront();
-        variableNames = line.strip().split();
-        foreach (ref var; variableNames) { var = var.replaceAll(regex("\""), ""); }
-        foreach (i; 0 .. variableNames.length) { variableIndex[variableNames[i]] = i; }
-        line = byLine.front; byLine.popFront();
-        formattedRead(line, "%d %d %d", &nic, &njc, &nkc);
-        _data.length = nic;
-        // Resize the storage for our block of data.
-        foreach (i; 0 .. nic) {
-            _data[i].length = njc;
-            foreach (j; 0 .. njc) {
-                _data[i][j].length = nkc;
-                foreach (k; 0 .. nkc) {
-                    _data[i][j][k].length = variableNames.length;
-                } // foreach k
-            } // foreach j
-        } // foreach i
-        // Scan the remainder of the file, extracting our data.
-        foreach (k; 0 .. nkc) {
-            foreach (j; 0 .. njc) {
-                foreach (i; 0 .. nic) {
-                    line = byLine.front; byLine.popFront();
-                    tokens = line.strip().split();
-                    assert(tokens.length == variableNames.length, "wrong number of items");
-                    foreach (ivar; 0 .. variableNames.length) {
-                        _data[i][j][k][ivar] = to!double(tokens[ivar]);
-                    }
-                } // foreach i
-            } // foreach j
-        } // foreach k
-    } // end constructor from file
+        this.simTime = simTime;
+        variableNames = variables.dup;
+        foreach (i, var; variables) variableIndex[var] = i;
+        this.ncells = ncells;
+        this.fieldFmt = fieldFmt;
+        this.readSolidVariablesFromFile(filename, variables, ncells);
+    }
 
     size_t[] to_ijk_indices(size_t gid) const
     {
@@ -262,46 +286,46 @@ public:
         return [i, j, k];
     }
 
-    ref double opIndex(string varName, size_t i, size_t j, size_t k=0)
-    {
-        return _data[i][j][k][variableIndex[varName]];
-    }
-
     ref double opIndex(string varName, size_t i)
     {
-        size_t[] ijk = to_ijk_indices(i);
-        return _data[ijk[0]][ijk[1]][ijk[2]][variableIndex[varName]];
+        return data[i][variableIndex[varName]];
     }
 
-    string variable_names_as_string(bool with_column_pos=false)
+    ref double opIndex(string varName, size_t i, size_t j, size_t k=0)
+    {
+        return data[single_index(i,j,k)][variableIndex[varName]];
+    }
+
+    string variable_names_as_string(bool with_column_pos=false,
+                                    bool with_quote_chars=false,
+                                    bool as_comment=false)
     {
         auto writer = appender!string();
-        formattedWrite(writer, "#");
+        if (as_comment) { formattedWrite(writer, "#"); }
         foreach (i, name; variableNames) {
-            if (with_column_pos) {
-                formattedWrite(writer, " %d:%s", i+1, name);
-            }
-            else {
-                formattedWrite(writer, " \"%s\"", name);
-            }
-        }
-        return writer.data;
-    }
-
-    string values_as_string(size_t i, size_t j, size_t k)
-    {
-        auto writer = appender!string();
-        formattedWrite(writer, "%.18e", _data[i][j][k][0]);
-        foreach (ivar; 1 .. variableNames.length) {
-            formattedWrite(writer, " %.18e", _data[i][j][k][ivar]);
+            string txt = name;
+            // Gnuplot column numbers start at 1.
+            if (with_column_pos) { txt = format("%d:%s", i+1, txt); }
+            if (with_quote_chars) { txt = format("\"%s\"", txt); }
+            if ((i==0 && as_comment) || (i>0)) { formattedWrite(writer, " "); }
+            formattedWrite(writer, "%s", txt);
         }
         return writer.data;
     }
 
     string values_as_string(size_t i)
     {
-        size_t[] ijk = to_ijk_indices(i);
-        return values_as_string(ijk[0], ijk[1], ijk[2]);
+        auto writer = appender!string();
+        formattedWrite(writer, "%.18e", data[i][0]);
+        foreach (ivar; 1 .. variableNames.length) {
+            formattedWrite(writer, " %.18e", data[i][ivar]);
+        }
+        return writer.data;
+    }
+
+    string values_as_string(size_t i, size_t j, size_t k)
+    {
+        return values_as_string(single_index(i,j,k));
     }
 
     void subtract_ref_soln(lua_State* L)
@@ -321,10 +345,15 @@ public:
                     // Call back to the Lua function to get a table of values.
                     // function refSolidSoln(x, y, z)
                     lua_getglobal(L, luaFnName.toStringz);
-                    lua_pushnumber(L, sim_time);
-                    lua_pushnumber(L, _data[i][j][k][variableIndex["pos.x"]]);
-                    lua_pushnumber(L, _data[i][j][k][variableIndex["pos.y"]]);
-                    lua_pushnumber(L, _data[i][j][k][variableIndex["pos.z"]]);
+                    lua_pushnumber(L, simTime);
+                    lua_pushnumber(L, data[single_index(i,j,k)][variableIndex["pos.x"]]);
+                    lua_pushnumber(L, data[single_index(i,j,k)][variableIndex["pos.y"]]);
+                    if (GlobalConfig.dimensions == 3) {
+                        lua_pushnumber(L, data[single_index(i,j,k)][variableIndex["pos.z"]]);
+                    }
+                    else {
+                        lua_pushnumber(L, 0.0);
+                    }
                     if ( lua_pcall(L, 4, 1, 0) != 0 ) {
                         string errMsg = "Error in call to " ~ luaFnName ~ 
                             " from user-supplied reference solution file: " ~ 
@@ -344,7 +373,7 @@ A table containing arguments is expected, but no table was found.`;
                         double value = 0.0;
                         if ( lua_isnumber(L, -1) ) value = lua_tonumber(L, -1);
                         lua_pop(L, 1);
-                        _data[i][j][k][ivar] -= value;
+                        data[single_index(i,j,k)][ivar] -= value;
                     }
                     lua_settop(L, 0); // clear the stack
                 } // foreach i
@@ -352,6 +381,4 @@ A table containing arguments is expected, but no table was found.`;
         } // foreach k
     } // end subtract_ref_soln()
 
-private:
-    double[][][][] _data;
-} // end class SBlockSolid
+} // end class SolidBlockLite

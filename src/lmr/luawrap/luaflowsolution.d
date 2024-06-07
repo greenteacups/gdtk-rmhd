@@ -61,7 +61,7 @@ extern(C) int newFlowSolution(lua_State* L)
         errMsg ~= " A table is expected as first (and only) argument.";
         luaL_error(L, errMsg.toStringz);
     }
-    string[] allowedNames = ["dir", "snapshot", "nBlocks", "tag", "make_kdtree"];
+    string[] allowedNames = ["dir", "snapshot", "nBlocks", "sim_time", "tag", "make_kdtree"];
     if ( !checkAllowedNames(L, 1, allowedNames) ) {
         string errMsg = "Error in call to FlowSolution:new.";
         errMsg ~= " The table contains unexpected names.";
@@ -148,7 +148,20 @@ extern(C) int newFlowSolution(lua_State* L)
     }
     lua_pop(L, 1);
 
-    auto fsol = new FlowSolution(snapshot, nBlocks, dir, make_kdtree);
+    double simTime;
+    lua_getfield(L, 1, "sim_time");
+    if (lua_isnil(L, -1)) {
+        simTime = -1.0;
+    } else if (lua_isnumber(L, -1)) {
+        simTime = luaL_checknumber(L, -1);
+    } else {
+        string errMsg = "Error in call to FlowSolution:new.\n";
+        errMsg ~= "  A field for 'sim_time' was found, but the content was not valid.\n";
+        errMsg ~= "  The value should be given as a number.\n";
+        luaL_error(L, errMsg.toStringz);
+    }
+
+    auto fsol = new FlowSolution(snapshot, nBlocks, simTime, dir, make_kdtree);
     flowSolutionStore ~= pushObj!(FlowSolution, FlowSolutionMT)(L, fsol);
     return 1;
 } // end newFlowSolution()
@@ -439,7 +452,7 @@ extern(C) int get_sim_time(lua_State* L)
 {
     auto fsol = checkFlowSolution(L, 1);
     lua_settop(L, 0);
-    lua_pushnumber(L, fsol.sim_time);
+    lua_pushnumber(L, fsol.simTime);
     return 1;
 }
 
@@ -565,6 +578,7 @@ void plottingTableToFlowStateTable(lua_State *L)
     auto managedGasModel = GlobalConfig.gmodel_master;
     auto n_species = managedGasModel.n_species;
     auto n_modes = managedGasModel.n_modes;
+    auto n_turb  = to!int(GlobalConfig.turb_model.nturb);
 
     // 0. Set a type string so that we may later identify this table as
     // having all the relevant data for making a FlowState object.
@@ -588,13 +602,12 @@ void plottingTableToFlowStateTable(lua_State *L)
     lua_setfield(L, tblIdx, "Bz");
 
     // 3. Convert temperatures
-    lua_getfield(L, tblIdx, "T"); // 2017-12-04, CHECK ME, redundant with today's name change
-    lua_setfield(L, tblIdx, "T");
     lua_newtable(L);
-    foreach ( i; 0 .. n_modes ) {
-        string key = format("T_modes[%d]", i);
+    foreach ( imode; 0 .. n_modes ) {
+        string modeName = managedGasModel.energy_mode_name(imode);
+        string key = format("T-%s", modeName);
         lua_getfield(L, tblIdx, toStringz(key));
-        lua_rawseti(L, -2, i+1);
+        lua_rawseti(L, -2, imode+1);
     }
     lua_setfield(L, tblIdx, "T_modes");
 
@@ -602,11 +615,22 @@ void plottingTableToFlowStateTable(lua_State *L)
     lua_newtable(L);
     foreach ( isp; 0 .. n_species ) {
         string spName = managedGasModel.species_name(isp);
-        string key = format("massf[%d]-%s", isp, spName);
+        string key = format("massf-%s", spName);
         lua_getfield(L, tblIdx, toStringz(key));
         lua_setfield(L, -2, toStringz(spName));
     }
     lua_setfield(L, tblIdx, "massf");
+
+    // 5. Convert turbulence variables
+    lua_newtable(L);
+    foreach ( iturb; 0 .. n_turb ) {
+        string turbName = GlobalConfig.turb_model.primitive_variable_name(iturb);
+        string key = format("tq-%s", turbName);
+        lua_getfield(L, tblIdx, toStringz(key));
+        lua_rawseti(L, -2, iturb+1);
+    }
+    lua_setfield(L, tblIdx, "turb");
+
 }
 
 extern(C) int get_cell_data(lua_State* L)

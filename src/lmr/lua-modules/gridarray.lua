@@ -1,5 +1,5 @@
 -- gridarray.lua
--- A module for constructing arrays of structured grids.
+-- A module for registering arrays of structured grids.
 --
 -- PJ, 2021-10-04
 --
@@ -11,7 +11,9 @@ local GridArray = {
 
 function GridArray:new(o)
    -- Construct a GridArray object which contains both the overall structured grid and
-   -- an array of structured grids.  We may be given either for starters.
+   -- an array of (registered) structured grids.
+   -- Eventually, we may be given either for starters.
+   -- For the moment, we always expect a single structured-grid to subdivide.
    --
    -- If we are given an initial overall grid, then we also expect to be given
    -- the number of subgrids to be formed in each index direction.
@@ -29,7 +31,9 @@ function GridArray:new(o)
    if not flag then
       error("GridArray constructor expected to receive a single table with named entries", 2)
    end
-   local flag = checkAllowedNames(o, {"tag", "fsTag", "bcTags",
+   local flag = checkAllowedNames(o, {"tag", "fieldType", "active",
+                                      "fsTag", "bcTags", "shock_fitting",
+                                      "ssTag", "solidBCTags", "solidModelTag",
                                       "grid", "gridArray", "nib", "njb", "nkb"})
    if not flag then
       error("Invalid name for item supplied to GridArray constructor.", 2)
@@ -45,11 +49,25 @@ function GridArray:new(o)
    assert(o.grid, "need to supply a grid")
    assert(o.grid:get_type() == "structured_grid", "supplied grid needs to be a structured grid")
    o.tag = o.tag or ""
+   -- Typically, we expect a construction via registerFluidGridArray or registerSolidGridArray
+   -- and these should set the field type correctly
+   o.fieldType = o.fieldType or "fluid"
+   if (o.active == nil) then
+      o.active = true
+   end
    o.fsTag = o.fsTag or ""
+   o.shock_fitting = o.shock_fitting or false
    o.bcTags = o.bcTags or {} -- for boundary conditions to be applied to the FluidBlocks
    for _,face in ipairs(faceList(config.dimensions)) do
       o.bcTags[face] = o.bcTags[face] or o.grid:get_tag(face)
    end
+   --
+   o.ssTag = o.ssTag or ""
+   o.solidBCTags = o.solidBCTags or {}
+   for _,face in ipairs(faceList(config.dimensions)) do
+      o.solidBCTags[face] = o.solidBCTags[face] or o.grid:get_tag(face)
+   end
+   o.solidModelTag = o.solidModelTag or ""
    --
    if o.grid then
       -- We will take a single grid and divide it into an array of subgrids.
@@ -167,6 +185,7 @@ function GridArray:new(o)
       end -- ib loop
       -- Finished generating subgrids
    else
+      error("We should not have arrived here. Presently, a single grid to be subdivided is required.", 2)
       -- We were not given a single grid,
       -- so we assume that we were given the array of subgrids.
       -- Join these into a single overall grid.
@@ -322,39 +341,74 @@ function GridArray:new(o)
    -- At this point, we have an array of StructuredGrid objects and
    -- the overall StructuredGrid.
    --
+   if o.shock_fitting then
+      -- Prepare the velocity-weights for later writing to file.
+      -- Note that vertex indicies start at 0 in each direction.
+      o.velocity_weights = {}
+      for i = 0, o.niv-1 do
+         o.velocity_weights[i] = {}
+         for j = 0, o.njv-1 do
+            o.velocity_weights[i][j] = {}
+         end
+      end
+      for j = 0, o.njv-1 do
+         for k = 0, o.nkv-1 do
+            distances = {}
+            i = o.niv-1
+            p0 = o.grid:get_vtx(i,j,k)
+            distances[i] = 0.0
+            for irev = 1, o.niv-1 do
+               i = o.niv-1-irev
+               p1 = o.grid:get_vtx(i,j,k)
+               ds = vabs(p1-p0)
+               distances[i] = distances[i+1] + ds
+               p0 = p1 -- for next step
+            end
+            local arc_length = distances[0]
+            for i = 0, o.niv-1 do
+               o.velocity_weights[i][j][k] = distances[i] / arc_length
+            end
+         end
+      end
+   else
+      o.velocity_weights = nil
+   end
+   --
    local gridCollection = {}
    o.myGrids = {}
    for ib = 1, o.nib do
       o.myGrids[ib] = {}
       for jb = 1, o.njb do
-	 if config.dimensions == 2 then
-	    -- 2D flow
-	    local subgrid = o.grids[ib][jb]
-	    local bcTags = {north="", east="", south="", west=""}
-	    if ib == 1 then bcTags['west'] = o.bcTags['west'] end
-	    if ib == o.nib then bcTags['east'] = o.bcTags['east'] end
-	    if jb == 1 then bcTags['south'] = o.bcTags['south'] end
-	    if jb == o.njb then bcTags['north'] = o.bcTags['north'] end
-	    local g = Grid:new{grid=subgrid, fsTag=o.fsTag, bcTags=bcTags, gridArrayId=o.id}
-	    gridCollection[#gridCollection+1] = g
+         if config.dimensions == 2 then
+	          -- 2D flow
+            local subgrid = o.grids[ib][jb]
+            local bcTags = {north="", east="", south="", west=""}
+            if ib == 1 then bcTags['west'] = o.bcTags['west'] end
+            if ib == o.nib then bcTags['east'] = o.bcTags['east'] end
+            if jb == 1 then bcTags['south'] = o.bcTags['south'] end
+            if jb == o.njb then bcTags['north'] = o.bcTags['north'] end
+            local g = RegisteredGrid:new{grid=subgrid, fieldType=o.fieldType, active=o.active, fsTag=o.fsTag, bcTags=bcTags,
+                                         ssTag=o.ssTag, solidBCTags=o.solidBCTags, solidModelTag=o.solidModelTag,  gridArrayId=o.id}
+            gridCollection[#gridCollection+1] = g
             o.myGrids[ib][jb] = g
-	 else
-	    -- 3D flow, need one more level in the array
+         else
+	          -- 3D flow, need one more level in the array
             o.myGrids[ib][jb] = {}
-	    for kb = 1, o.nkb do
-	       local subgrid = o.grids[ib][jb][kb]
-	       local bcTags = {north="", east="", south="", west="", top="", bottom=""}
-	       if ib == 1 then bcTags['west'] = o.bcTags['west'] end
-	       if ib == o.nib then bcTags['east'] = o.bcTags['east'] end
-	       if jb == 1 then bcTags['south'] = o.bcTags['south'] end
-	       if jb == o.njb then bcTags['north'] = o.bcTags['north'] end
-	       if kb == 1 then bcTags['bottom'] = o.bcTags['bottom'] end
-	       if kb == o.nkb then bcTags['top'] = o.bcTags['top'] end
-	       local g = Grid:new{grid=subgrid, fsTag=o.fsTag, bcTags=bcTags, gridArrayId=o.id}
-	       gridCollection[#gridCollection+1] = g
+            for kb = 1, o.nkb do
+               local subgrid = o.grids[ib][jb][kb]
+               local bcTags = {north="", east="", south="", west="", top="", bottom=""}
+               if ib == 1 then bcTags['west'] = o.bcTags['west'] end
+               if ib == o.nib then bcTags['east'] = o.bcTags['east'] end
+               if jb == 1 then bcTags['south'] = o.bcTags['south'] end
+               if jb == o.njb then bcTags['north'] = o.bcTags['north'] end
+               if kb == 1 then bcTags['bottom'] = o.bcTags['bottom'] end
+               if kb == o.nkb then bcTags['top'] = o.bcTags['top'] end
+               local g = RegisteredGrid:new{grid=subgrid, fieldType=o.fieldType, active=o.active, fsTag=o.fsTag, bcTags=bcTags,
+                                            ssTag=o.ssTag, solidBCTags=o.solidBCTags, solidModelTag=o.solidModelTag, gridArrayId=o.id}
+               gridCollection[#gridCollection+1] = g
                o.myGrids[ib][jb][kb] = g
-	    end -- kb loop
-	 end -- dimensions
+            end -- kb loop
+         end -- dimensions
       end -- jb loop
    end -- ib loop
    -- Make the inter-subblock connections
@@ -365,14 +419,26 @@ function GridArray:new(o)
    return o
 end -- GridArray:new
 
-function GridArray:tojson(o)
+function GridArray:tojson()
+   -- Write enough of the GridArray metadata to a JSON string
+   -- so that we can later reconstruct the array of blocks
+   -- in the prep-sim stage of preparation.
+   -- We will also use this data to construct a FluidBlockArray
+   -- in the dlang simulation code, when doing shock fitting.
    local str = '{\n'
    str = str .. string.format('  "tag": "%s",\n', self.tag)
+   str = str .. string.format('  "fieldType": "%s",\n', self.fieldType)
+   str = str .. string.format('  "active": %s,\n', tostring(self.active))
    str = str .. string.format('  "fsTag": "%s",\n', self.fsTag)
    str = str .. string.format('  "type": "%s",\n', self.myType)
-   str = str .. '    "ids": ['
+   str = str .. string.format('  "shock_fitting": %s,\n', tostring(self.shock_fitting))
+   str = str .. string.format('  "ssTag": "%s",\n', self.ssTag)
+   str = str .. string.format('  "solidModelTag": "%s",\n', self.solidModelTag)
+   -- Write the block ids as a list of lists because that if the
+   -- highest quality information.
+   str = str .. '  "idarray": [\n'
    for ib = 1, self.nib do
-      str = str .. '['
+      str = str .. '    ['
       for jb = 1, self.njb do
          if config.dimensions == 2 then
             str = str .. string.format("%d", self.myGrids[ib][jb].id)
@@ -391,31 +457,52 @@ function GridArray:tojson(o)
       if ib < self.nib then str = str .. ',' end
       str = str .. '\n'
    end
-   str = str .. '    ],\n' -- end of ids array
-   str = str .. string.format('    "nib": %d,\n', self.nib)
-   str = str .. string.format('    "njb": %d,\n', self.njb)
-   str = str .. string.format('    "nkb": %d,\n', self.nkb)
-   str = str .. string.format('    "niv": %d,\n', self.niv)
-   str = str .. string.format('    "njv": %d,\n', self.njv)
-   str = str .. string.format('    "nkv": %d,\n', self.nkv)
+   str = str .. '    ],\n' -- end of idarray
    --
-   str = str .. string.format('    "nics": [ ')
+   -- We write the block ids again as a flattened list because the main dlang code
+   -- expects them in that layout.
+   str = str .. '  "idflatlist": ['
+   for ib = 1, self.nib do
+      for jb = 1, self.njb do
+         if config.dimensions == 2 then
+            str = str .. string.format("%d", self.myGrids[ib][jb].id)
+         else
+            -- 3D has an extra level
+            for kb = 1, self.nkb do
+               str = str .. string.format("%d", self.myGrids[ib][jb][kb].id)
+               if kb < self.nkb then str = str .. ',' end
+            end
+         end
+         if jb < self.njb then str = str .. ',' end
+      end
+      if ib < self.nib then str = str .. ',' end
+   end
+   str = str .. '],\n' -- end of idlist
+   --
+   str = str .. string.format('  "nib": %d,\n', self.nib)
+   str = str .. string.format('  "njb": %d,\n', self.njb)
+   str = str .. string.format('  "nkb": %d,\n', self.nkb)
+   str = str .. string.format('  "niv": %d,\n', self.niv)
+   str = str .. string.format('  "njv": %d,\n', self.njv)
+   str = str .. string.format('  "nkv": %d,\n', self.nkv)
+   --
+   str = str .. string.format('  "nics": [')
    for i=1,#(self.nics)-1 do
       str = str .. string.format('%d, ', self.nics[i])
    end
-   str = str .. string.format('%d ],\n', self.nics[#self.nics])
+   str = str .. string.format('%d],\n', self.nics[#self.nics])
    --
-   str = str .. string.format('    "njcs": [ ')
+   str = str .. string.format('  "njcs": [')
    for i=1,#(self.njcs)-1 do
       str = str .. string.format('%d, ', self.njcs[i])
    end
-   str = str .. string.format('%d ],\n', self.njcs[#self.njcs])
+   str = str .. string.format('%d],\n', self.njcs[#self.njcs])
    --
-   str = str .. string.format('    "nkcs": [ ')
+   str = str .. string.format('  "nkcs": [')
    for i=1,#(self.nkcs)-1 do
       str = str .. string.format('%d, ', self.nkcs[i])
    end
-   str = str .. string.format('%d ]\n', self.nkcs[#self.nkcs]) -- Note last item with no comma.
+   str = str .. string.format('%d]\n', self.nkcs[#self.nkcs]) -- Note last item with no comma.
    --
    str = str .. '}'
    return str

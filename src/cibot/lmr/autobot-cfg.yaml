@@ -1,0 +1,16 @@
+---
+devsOnReceiveList:
+    - "n.gibbons@uq.edu.au"
+    - "r.gollan@uq.edu.au"
+    - "kyle.damm@uqconnect.edu.au"
+    - "p.jacobs@uq.edu.au"
+lmrDir: '/home/groups/gdtk-dev/gdtk/src/lmr'
+testDir: '/home/groups/gdtk-dev/lmr-test'
+exDir: '/home/groups/gdtk-dev/gdtk/examples/lmr'
+instDir: '/home/groups/gdtk-dev/gdtkinst'
+logDir: '/home/groups/gdtk-dev/lmr-test/logs'
+logFilePrefix: 'lmr-test'
+mailFilePrefix: 'autobot-mail'
+buildCommand: 'make FLAVOUR=fast'
+testEmail: "r.gollan@uq.edu.au"
+...

@@ -8,6 +8,7 @@
 module ssolidblock;
 
 import std.stdio;
+import std.string : toStringz;
 import std.algorithm;
 import std.parallelism;
 import std.conv;
@@ -18,13 +19,16 @@ import ntypes.complex;
 import nm.number;
 import std.json;
 import util.lua;
+import util.lua_service;
 import nm.rsla;
 import nm.smla;
+import geom.luawrap.luasgrid : checkStructuredGrid;
 import json_helper;
 import lua_helper;
 import gzip;
 import geom;
 import globalconfig;
+import globaldata : dedicatedConfig;
 import fluidblock;
 import sfluidblock;
 import solidblock;
@@ -32,9 +36,12 @@ import solidfvcell;
 import solidfvinterface;
 import solidfvvertex;
 import solidbc;
-import solidprops;
 import block;
 import jacobian;
+
+import lmr.solid.solidthermalmodel;
+
+enum ghost_cell_start_id = 1_000_000_000;
 
 class SSolidBlock : SolidBlock {
 public:
@@ -67,6 +74,7 @@ public:
     this(int id, size_t nicell, size_t njcell, size_t nkcell, string label)
     {
         super(id, label);
+        myConfig = dedicatedConfig[id];
         this.n_ghost_cell_layers = GlobalConfig.n_ghost_cell_layers;
         this.nicell = nicell;
         this.njcell = njcell;
@@ -83,6 +91,81 @@ public:
         label = getJSONstring(jsonData, "label", "");
         this(id, nicell, njcell, nkcell, label);
         active = getJSONbool(jsonData, "active", true);
+    }
+
+    this(lua_State* L)
+    {
+        auto grid = checkStructuredGrid(L, 2);
+        nicell = grid.niv - 1;
+        njcell = grid.njv - 1;
+        nkcell = grid.nkv - 1;
+        if (GlobalConfig.dimensions == 2) nkcell = 1;
+        const size_t ncells = nicell*njcell*nkcell;
+        cells.length = ncells;
+        super(-1, "nil");
+        // check where the initial temperature is coming from
+        double T_init;
+        bool lua_fn = false;
+        if (lua_isnumber(L, 3)) {
+            T_init = luaL_checknumber(L, 3);
+        }
+        else if (lua_isfunction(L, 3)) {
+            lua_fn = true;
+        }
+        auto stm = lmr.solid.solidthermalmodel.initSolidThermalModel(L, 4);
+        Vector3 pos;
+        number volume, iLen, jLen, kLen;
+        size_t[3] ijk;
+        size_t i, j, k;
+        foreach(cell_idx, ref cell; cells) {
+            // get the cell index in terms of structured grid indices
+            ijk = cell_index_to_logical_coordinates(cell_idx, nicell, njcell);
+            i = ijk[0]; j = ijk[1]; k = ijk[2];
+            // get the cell data
+            Vector3 p000 = *grid[i,j,k];
+            Vector3 p100 = *grid[i+1,j,k];
+            Vector3 p110 = *grid[i+1,j+1,k];
+            Vector3 p010 = *grid[i,j+1,k];
+            if (GlobalConfig.dimensions == 2) {
+                number xyplane_area;
+                xyplane_quad_cell_properties(p000, p100, p110, p010, pos, xyplane_area, iLen, jLen, kLen);
+                volume = xyplane_area * ((GlobalConfig.axisymmetric) ? pos.y : to!number(1.0) );
+            }
+            else if (GlobalConfig.dimensions == 3) {
+                Vector3 p001 = *grid[i,j,k+1];
+                Vector3 p101 = *grid[i+1,j,k+1];
+                Vector3 p111 = *grid[i+1,j+1,k+1];
+                Vector3 p011 = *grid[i,j+1,k+1];
+                hex_cell_properties(p000, p100, p110, p010, p001, p101, p111, p011,
+                                    GlobalConfig.true_centroids, pos, volume, iLen, jLen, kLen);
+            }
+            else {
+                throw new Exception("GlobalConfig.dimensions not 2 or 3.");
+            }
+            if (lua_fn) {
+                // Now grab temperature via Lua function call.
+                lua_pushvalue(L, 3);
+                lua_pushnumber(L, pos.x);
+                lua_pushnumber(L, pos.y);
+                lua_pushnumber(L, pos.z);
+                if (lua_pcall(L, 3, 1, 0) != 0) {
+                    string errMsg = "Error in Lua function call for setting initial temperature in solid\n";
+                    errMsg ~= "as a function of position (x, y, z).\n";
+                    luaL_error(L, errMsg.toStringz);
+                }
+                if (lua_isnumber(L, -1)) {
+                    T_init = luaL_checknumber(L, -1);
+                }
+                else {
+                    string errMsg = "Error in Lua function call for setting initial temperature in solid.\n";
+                    errMsg ~= "A single number value should be returned.";
+                    luaL_error(L, errMsg.toStringz);
+                }
+            }
+            // make the cell
+            cell = new SolidFVCell(pos, volume, T_init, stm, to!int(cell_idx));
+        }
+        lua_settop(L, 0);
     }
 
     pragma(inline, true)
@@ -559,35 +642,6 @@ public:
         } // for k
     } // end read_solution()
 
-    override void writeSolution(string fileName, double simTime)
-    {
-        if ( myConfig.verbosity_level >= 1 && id == 0 ) {
-            writeln("write_solution(): Start solid_block ", id);
-        }
-        auto outfile = new GzipOut(fileName);
-        auto writer = appender!string();
-        formattedWrite(writer, "%.18e\n", simTime);
-        outfile.compress(writer.data);
-        writer = appender!string();
-        foreach(varname; varListForSolidCell()) {
-            formattedWrite(writer, " \"%s\"", varname);
-        }
-        formattedWrite(writer, "\n");
-        outfile.compress(writer.data);
-        writer = appender!string();
-        formattedWrite(writer, "%d %d %d\n", nicell, njcell, nkcell);
-        outfile.compress(writer.data);
-        for ( size_t k = kmin; k <= kmax; ++k ) {
-            for ( size_t j = jmin; j <= jmax; ++j ) {
-                for ( size_t i = imin; i <= imax; ++i ) {
-                    outfile.compress(" " ~ getCell(i,j,k).writeValuesToString() ~ "\n");
-                } // for i
-            } // for j
-        } // for k
-        outfile.finish();
-    }
-
-
     override void computePrimaryCellGeometricData()
     {
         if ( myConfig.dimensions == 2 ) {
@@ -1001,6 +1055,13 @@ public:
     }
 
     @nogc
+    override void averageProperties() {
+        foreach (f; faces) {
+            f.averageProperties();
+        }
+    }
+
+    @nogc
     override void averageTGradients() {
         foreach (f; faces) {
             f.averageTGradient();
@@ -1050,7 +1111,8 @@ public:
                 auto kLen = sqrt(dx^^2 + dy^^2 + dz^^2);
                 L_min = min(iLen, jLen, kLen);
             }
-            alpha = cell.sp.k / (cell.sp.rho*cell.sp.Cp);
+            stm.updateProperties(cell.ss);
+            alpha = cell.ss.k / (cell.ss.rho*cell.ss.Cp);
             // Computational Fluid Mechanics and Heat Transfer
             // J. C. Tannehill, D. A. Anderson, and R. H Pletcher
             // Second Edition, Taylor & Francis, 1997
@@ -1193,7 +1255,9 @@ public:
         else { eps = eps0*fabs(pcell.e[0]) + eps0; }
         pcell.e[ftl] = pcell.e[0];
         pcell.e[ftl] += eps;
-        pcell.T = updateTemperature(pcell.sp, pcell.e[ftl]);
+        pcell.ss.e = pcell.e[ftl];
+        stm.updateTemperature(pcell.ss);
+        pcell.T = pcell.ss.T;
 
         // evaluate perturbed residuals in local stencil
         evalRHS(dim, gtl, ftl, pcell.cell_list, pcell.face_list, pcell);

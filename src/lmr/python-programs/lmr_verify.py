@@ -12,14 +12,19 @@
 # Author: Rowan J. Gollan
 # Date: 2023-07-15
 #
-# History: 2023-08-19
-#          Re-work into a program that can be used in any directory
+# History:
+#   2023-08-19
+#   Re-work into a program that can be used in any directory
+#   2024-03-15
+#   Add treatment of solid-domain norms also
+
 
 import click
 import yaml
 import os
 import subprocess
 import shutil
+import shlex
 from math import log
 
 filesToCopyFilename = "FILES_TO_COPY"
@@ -45,6 +50,10 @@ If supplied, this is used in preference to a supplied case-number.
 @click.option("--norms", "normsStr",
               default="rho",
               help="Error norms for calculation as comma-separated list.",
+              show_default=True)
+@click.option("--solid-norms", "solidNormsStr",
+              default=None,
+              help="Error norms (solid domains) for calculation as comma-separated list.",
               show_default=True)
 @click.option("-glf", "--grid-level-file", 'gridLevelFile',
               default="grid-levels.py",
@@ -86,7 +95,7 @@ for the verification runs.
               show_default=True,
               help="Only perform post-processing portion (norm and observed order calcs)"
               )
-def verify(caseFile, caseNumber, caseTag, normsStr, gridLevelFile, levelsToExec, commonDir, postProcessOnly):
+def verify(caseFile, caseNumber, caseTag, normsStr, solidNormsStr, gridLevelFile, levelsToExec, commonDir, postProcessOnly):
     """Run a verification test.
 
     \b
@@ -101,11 +110,16 @@ def verify(caseFile, caseNumber, caseTag, normsStr, gridLevelFile, levelsToExec,
     if case == None:
         print("No case to process found. Exiting.")
         exit(1)
-    
+
     levelsToExec = [int(lvl) for lvl in levelsToExec.split(",")]
     levelsToExec.sort(reverse=True)
     norms = normsStr.split(",")
     norms = [norm.strip() for norm in norms]
+    if solidNormsStr:
+        solidNorms = solidNormsStr.split(",")
+        solidNorms = [norm.strip() for norm in solidNorms]
+    else:
+        solidNorms = None
 
     # 1. Prepare gridLevels and simFiles
     exec(open(gridLevelFile).read(), globals())
@@ -119,8 +133,8 @@ def verify(caseFile, caseNumber, caseTag, normsStr, gridLevelFile, levelsToExec,
         runGridLevels(case, levelsToExec)
 
     # 3. Post-process results
-    computeNorms(case, levelsToExec, normsStr)
-    assembleResults(case, gridLevels, levelsToExec, norms)
+    computeNorms(case, levelsToExec, normsStr, solidNormsStr)
+    assembleResults(case, gridLevels, levelsToExec, norms, solidNorms)
 
 def assembleSimFiles(commonDir):
     with open(commonDir + "/" + filesToCopyFilename, "r") as f:
@@ -187,9 +201,9 @@ def buildConfigStr(case, grid):
 
 def buildRunStr():
     return (
-        f"lmr prep-grid\n"
-        f"lmr prep-flow\n"
-        f"lmr run-steady\n"
+        f"make prep-grid\n"
+        f"make prep-sim\n"
+        f"make run\n"
         )
 
 def runGridLevels(case, levelsToExec):
@@ -215,11 +229,11 @@ def checkRun(logfile):
         if line.find("STOP-REASON") != -1:
             reason = line.split()[1]
     fp.close()
-    if reason != "relative-global-residual-target" and reason != "maximum-steps":
+    if reason != "relative-global-residual-target" and reason != "maximum-steps" and reason != "maximum-time":
         return False
     return True
 
-def computeNorms(case, levelsToExec, normsStr):
+def computeNorms(case, levelsToExec, normsStr, solidNormsStr):
     print("Computing norms.")
     cwd = os.getcwd()
     caseDir = "case-" + case["label"]
@@ -228,33 +242,48 @@ def computeNorms(case, levelsToExec, normsStr):
         subDir = caseDir + f"/k-{k}"
         os.chdir(subDir)
         cmd = f"lmr compute-norms -f -n {normsStr} -r ref-soln.lua -o ../error-norms-k-{k}.txt"
-        proc = subprocess.run(cmd.split())
+        if solidNormsStr:
+            cmd = f"lmr compute-norms -f -n {normsStr} --solid-norms='{solidNormsStr}' -r ref-soln.lua -o ../error-norms-k-{k}.txt"
+        proc = subprocess.run(shlex.split(cmd))
         assert proc.returncode == 0, f"Failed to compute norms for grid level {k=}"
         os.chdir(cwd)
     return
 
-def assembleResults(case, gridLevels, levelsToExec, norms):
+def assembleResults(case, gridLevels, levelsToExec, norms, solidNorms):
     print("Assembling output files.")
     L1 = {}; L2 = {}; Linf = {}; dx = {}
+    L1_s = {}; L2_s = {}; Linf_s = {}
     caseDir = "case-" + case["label"]
     f = open(f"{caseDir}/error-norms-{caseDir}.dat", "w")
     header = "# dx "
     for norm in norms:
         header += f"L1-{norm}  L2-{norm}  Linf-{norm} "
+    if solidNorms:
+        for norm in solidNorms:
+            header += f"L1-solid-{norm}  L2-solid-{norm}  Linf-solid-{norm} "
     header += "\n"
     f.write(header)
     for k in levelsToExec:
         fname = f"{caseDir}/error-norms-k-{k}.txt"
         with open(fname, "r") as file:
-            doc = yaml.safe_load(file)
+            doc = list(yaml.safe_load_all(file))
+        fluid = doc[0]
         L1[k] = {}; L2[k] = {}; Linf[k] = {};
         dx[k] = gridLevels[k]['dx']
         row = f"{dx[k]:20.12e} "
         for norm in norms:
-            L1[k][norm] = doc[norm]["L1"]
-            L2[k][norm] = doc[norm]["L2"]
-            Linf[k][norm] = doc[norm]["Linf"]
+            L1[k][norm] = fluid[norm]["L1"]
+            L2[k][norm] = fluid[norm]["L2"]
+            Linf[k][norm] = fluid[norm]["Linf"]
             row += f"{L1[k][norm]:20.12e} {L2[k][norm]:20.12e} {Linf[k][norm]:20.12e} "
+        if solidNorms:
+            solid = doc[1]
+            L1_s[k] = {}; L2_s[k] = {}; Linf_s[k] = {};
+            for norm in solidNorms:
+                L1_s[k][norm] = solid[norm]["L1"]
+                L2_s[k][norm] = solid[norm]["L2"]
+                Linf_s[k][norm] = solid[norm]["Linf"]
+                row += f"{L1_s[k][norm]:20.12e} {L2_s[k][norm]:20.12e} {Linf_s[k][norm]:20.12e} "
         row += "\n"
         f.write(row)
     f.close()
@@ -269,6 +298,9 @@ def assembleResults(case, gridLevels, levelsToExec, norms):
     header = "# dx "
     for norm in norms:
         header += f"L1-{norm}  L2-{norm}  Linf-{norm} "
+    if solidNorms:
+        for norm in solidNorms:
+            header += f"L1-solid-{norm}  L2-solid-{norm}  Linf-solid-{norm} "
     header += "\n"
     f.write(header)
     for i in range(len(levelsToExec)-1):
@@ -281,6 +313,12 @@ def assembleResults(case, gridLevels, levelsToExec, norms):
             pL2 = log(L2[kp1][norm]/L2[k][norm])/logr
             pLinf = log(Linf[kp1][norm]/Linf[k][norm])/logr
             row += f"{pL1:20.12e} {pL2:20.12e} {pLinf:20.12e} "
+        if solidNorms:
+            for norm in solidNorms:
+                pL1 = log(L1_s[kp1][norm]/L1_s[k][norm])/logr
+                pL2 = log(L2_s[kp1][norm]/L2_s[k][norm])/logr
+                pLinf = log(Linf_s[kp1][norm]/Linf_s[k][norm])/logr
+                row += f"{pL1:20.12e} {pL2:20.12e} {pLinf:20.12e} "
         row += "\n"
         f.write(row)
     f.close()

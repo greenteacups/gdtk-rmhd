@@ -12,6 +12,9 @@ local lmr_config = {}
 
 local json = require 'json'
 
+local globalconfig = require 'globalconfig'
+config = globalconfig.config
+
 function lmrConfigAsTable()
    local lmrCfgFile = os.getenv("DGD") .. "/etc/lmr.cfg"
    local f = assert(io.open(lmrCfgFile, "r"))
@@ -58,11 +61,13 @@ function lmr_config.gridMetadataFilename(id)
    return lmr_config.gridDirectory() .. "/" .. lmrCfg["grid-prefix"] .. lmrCfg["metadata-extension"]
 end
 
-function lmr_config.gridFilename(id, ext)
+function lmr_config.gridFilename(id)
    local gname = lmr_config.gridDirectory() .. "/" .. lmrCfg["grid-prefix"] .. "-" .. string.format(lmrCfg["block-index-format"], id)
-   if ext then gname = gname .. ext end
-   return gname
+   if (config.grid_format == "gziptext") then
+      gname = gname .. lmrCfg["gzip-extension"]
    end
+   return gname
+end
 
 function lmr_config.snapshotDirectory(snapshot)
    local dname = lmrCfg["simulation-directory"]
@@ -75,18 +80,27 @@ function lmr_config.snapshotDirectory(snapshot)
    return dname
 end
 
-function lmr_config.flowFilename(snapshot, blkId)
+function lmr_config.fluidFilename(snapshot, blkId)
    local fname = lmr_config.snapshotDirectory(snapshot)
    fname = fname .. "/"
-   fname = fname .. lmrCfg["flow-prefix"] .. "-" .. string.format(lmrCfg["block-index-format"], blkId)
+   fname = fname .. lmrCfg["fluid-prefix"] .. "-" .. string.format(lmrCfg["block-index-format"], blkId)
    return fname
 end
 
-function lmr_config.gridForSimFilename(snapshot, blkId, ext)
+function lmr_config.solidFilename(snapshot, blkId)
+   local fname = lmr_config.snapshotDirectory(snapshot)
+   fname = fname .. "/"
+   fname = fname .. lmrCfg["solid-prefix"] .. "-" .. string.format(lmrCfg["block-index-format"], blkId)
+   return fname
+end
+
+function lmr_config.gridForSimFilename(snapshot, blkId)
    local gname = lmr_config.snapshotDirectory(snapshot)
    gname = gname .. "/"
    gname = gname .. lmrCfg["grid-prefix"] .. "-" .. string.format(lmrCfg["block-index-format"], blkId)
-   if ext then gname = gname .. ext end
+   if (config.grid_format == "gziptext") then
+      gname = gname .. lmrCfg["gzip-extension"]
+   end
    return gname
 end
 

@@ -142,7 +142,6 @@ final class ChemistryUpdate : ThermochemicalReactor {
     {
         _Qinit.copy_values_from(Q);
         _gmodel.massf2conc(Q, _conc0);
-        number uTotal = _gmodel.internal_energy(Q);
 
         // 0. Evaluate the rate constants.
         //    It helps to have these computed before doing other setup work.
@@ -643,7 +642,7 @@ private:
         }
 
         if ( sigma <= 0.0 ) {
-            h_new = h;
+            h_new = 10.0*h;
         }
         else {
             double x = sigma;

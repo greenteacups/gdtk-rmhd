@@ -133,6 +133,8 @@ class GasModel(object):
     def __init__(self, file_name):
         self.file_name = file_name
         self.id = so.gas_model_new(bytes(self.file_name, 'utf-8'))
+        if self.id < 0:
+            raise RuntimeError("Could not construct a new gas model.")
         self.species_names = []
         buf = ffi.new("char[]", b'\000'*32)
         for i in range(self.n_species):
@@ -291,7 +293,7 @@ class GasModel(object):
                     massf_list.append(0.0)
         if abs(sum(massf_list) - 1.0) > 1.0e-6:
             raise Exception("mass fractions do not sum to 1.")
-        for i in range(self.nspecies): self._massf[i] = massf_list[i]
+        for i in range(self.n_species): self._massf[i] = massf_list[i]
         so.gas_model_massf2molef(self.id, self._massf, self._molef)
         return [self._molef[i] for i in range(self.n_species)]
 

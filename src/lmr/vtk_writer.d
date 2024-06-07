@@ -23,8 +23,9 @@ import fileutil;
 import geom;
 import gas;
 import globalconfig;
-import flowsolution;
-import solidsolution;
+import flowsolution : FluidBlockLite;
+import solidsolution : SolidBlockLite;
+import lmrexceptions : LmrPostProcessingException;
 
 
 File begin_PVD_file(string fileName)
@@ -101,7 +102,7 @@ void write_VTU_file(FluidBlockLite flow, Grid grid, string fileName, bool binary
     if (flow.ncells != grid.ncells) {
         string msg = text("Mismatch between grid and flow grid.ncells=",
                           grid.ncells, " flow.ncells=", flow.ncells);
-        throw new FlowSolverException(msg);
+        throw new LmrPostProcessingException(msg);
     }
     size_t NumberOfCells = flow.ncells;
     fp.write("<VTKFile type=\"UnstructuredGrid\" byte_order=\"BigEndian\">\n");
@@ -241,7 +242,7 @@ void write_VTU_file(FluidBlockLite flow, Grid grid, string fileName, bool binary
     //
     // Write the special variables:
     // i.e. variables constructed from those in the dictionary.
-    if (canFind(flow.variableNames, "vel.x") && canFind(flow.variableNames, "vel.y") && canFind(flow.variableNames, "vel.z")) {
+    if (canFind(flow.variableNames, "vel.x") && canFind(flow.variableNames, "vel.y")) {
         fp.write(" <DataArray Name=\"vel.vector\" type=\"Float32\" NumberOfComponents=\"3\"");
         if (binary_format) {
             fp.writef(" format=\"appended\" offset=\"%d\">", binary_data_offset);
@@ -249,10 +250,12 @@ void write_VTU_file(FluidBlockLite flow, Grid grid, string fileName, bool binary
         } else {
             fp.write(" format=\"ascii\">\n");
         }
+
+        bool isThreeDimensional = canFind(flow.variableNames, "vel.z");
         foreach (i; 0 .. flow.ncells) {
             float x = uflowz(flow["vel.x",i]);
             float y = uflowz(flow["vel.y",i]);
-            float z = uflowz(flow["vel.z",i]);
+            float z = (isThreeDimensional) ? uflowz(flow["vel.z",i]) : 0.0;
             if (binary_format) {
                 binary_data ~= nativeToBigEndian(x);
                 binary_data ~= nativeToBigEndian(y);
@@ -344,7 +347,7 @@ void write_VTU_file(FluidBlockLite flow, Grid grid, string fileName, bool binary
 
 
 // This version is for the solid domain.
-void write_VTU_file(SBlockSolid solid, StructuredGrid grid, string fileName, bool binary_format)
+void write_VTU_file(SolidBlockLite solid, StructuredGrid grid, string fileName, bool binary_format)
 // Write the cell-centred flow data from a single block (index jb)
 // as an unstructured grid of finite-volume cells.
 {
@@ -560,3 +563,165 @@ void write_VTU_file(SBlockSolid solid, StructuredGrid grid, string fileName, boo
     fp.close();
     return;
 } // end write_VTU_file()
+
+void writeVTUfile(double[][] data, Grid grid, string[] variables, string fileName, bool binaryFormat)
+{
+    auto fp = File(fileName, "wb"); // We may be writing some binary data.
+    ubyte[] binary_data_string;
+    ubyte[] binary_data;
+    int binary_data_offset = 0;
+    bool two_D = (grid.dimensions == 2);
+    size_t NumberOfPoints = grid.nvertices;
+    if (data.length != grid.ncells) {
+        string msg = text("Mismatch between grid and data grid.ncells=",
+                          grid.ncells, " data.length=", data.length);
+        throw new FlowSolverException(msg);
+    }
+    size_t NumberOfCells = data.length;
+    fp.write("<VTKFile type=\"UnstructuredGrid\" byte_order=\"BigEndian\">\n");
+    fp.write("<UnstructuredGrid>");
+    fp.writef("<Piece NumberOfPoints=\"%d\" NumberOfCells=\"%d\">\n",
+              NumberOfPoints, NumberOfCells);
+    //
+    fp.write("<Points>\n");
+    fp.write(" <DataArray type=\"Float32\" NumberOfComponents=\"3\"");
+    if (binaryFormat) {
+        fp.writef(" format=\"appended\" offset=\"%d\">", binary_data_offset);
+        binary_data.length=0;
+    } else {
+        fp.write(" format=\"ascii\">\n");
+    }
+    foreach (i; 0 .. grid.nvertices) {
+        float x = uflowz(grid[i].x.re);
+        float y = uflowz(grid[i].y.re);
+        float z = uflowz(grid[i].z.re);
+        if (binaryFormat) {
+            binary_data ~= nativeToBigEndian(x);
+            binary_data ~= nativeToBigEndian(y);
+            binary_data ~= nativeToBigEndian(z);
+        } else {
+            fp.writef(" %.18e %.18e %.18e\n", x,y,z);
+        }
+    }
+    fp.write(" </DataArray>\n");
+    if (binaryFormat) {
+        uint32_t binary_data_count = to!uint32_t(binary_data.length); // 4-byte count of bytes
+        binary_data_string ~= nativeToBigEndian(binary_data_count);
+        binary_data_string ~= binary_data;
+        binary_data_offset += 4 + binary_data.length;
+    }
+    fp.write("</Points>\n");
+    //
+    fp.write("<Cells>\n");
+    fp.write(" <DataArray type=\"Int32\" Name=\"connectivity\"");
+    if (binaryFormat) {
+        fp.writef(" format=\"appended\" offset=\"%d\">", binary_data_offset);
+        binary_data.length = 0;
+    } else {
+        fp.write(" format=\"ascii\">\n");
+    }
+    foreach (i; 0 .. grid.ncells) {
+        auto ids = grid.get_vtx_id_list_for_cell(i);
+        if (binaryFormat) {
+            foreach (id; ids) { binary_data ~= nativeToBigEndian(to!int32_t(id)); }
+        } else {
+            foreach (id; ids) { fp.writef(" %d", id); }
+            fp.write("\n");
+        }
+    } // end foreach i
+    fp.write(" </DataArray>\n");
+    if (binaryFormat) {
+        uint32_t binary_data_count = to!uint32_t(binary_data.length); // 4-byte count of bytes
+        binary_data_string ~= nativeToBigEndian(binary_data_count);
+        binary_data_string ~= binary_data;
+        binary_data_offset += 4 + binary_data.length;
+    }
+    //
+    fp.write(" <DataArray type=\"Int32\" Name=\"offsets\"");
+    if (binaryFormat) {
+        fp.writef(" format=\"appended\" offset=\"%d\">", binary_data_offset);
+        binary_data.length = 0;
+    } else {
+        fp.write(" format=\"ascii\">\n");
+    }
+    // Since all of the point-lists are concatenated, these offsets into the connectivity
+    // array specify the end of each cell.
+    size_t conn_offset = 0;
+    foreach (i; 0 .. grid.ncells) {
+        conn_offset += grid.number_of_vertices_for_cell(i);
+        if (binaryFormat) {
+            binary_data ~= nativeToBigEndian(to!int32_t(conn_offset));
+        } else {
+            fp.writef(" %d\n", conn_offset);
+        }
+    } // end foreach i
+    fp.write(" </DataArray>\n");
+    if (binaryFormat) {
+        uint32_t binary_data_count = to!uint32_t(binary_data.length); // 4-byte count of bytes
+        binary_data_string ~= nativeToBigEndian(binary_data_count);
+        binary_data_string ~= binary_data;
+        binary_data_offset += 4 + binary_data.length;
+    }
+    //
+    fp.write(" <DataArray type=\"UInt8\" Name=\"types\"");
+    if (binaryFormat) {
+        fp.writef(" format=\"appended\" offset=\"%d\">", binary_data_offset);
+        binary_data.length = 0;
+    } else {
+        fp.write(" format=\"ascii\">\n");
+    }
+    foreach (i; 0 .. grid.ncells) {
+        int type_value = grid.vtk_element_type_for_cell(i);
+        if (binaryFormat) {
+            binary_data ~= nativeToBigEndian(to!uint8_t(type_value));
+        } else {
+            fp.writef(" %d\n", type_value);
+        }
+    } // end foreach i
+    fp.write(" </DataArray>\n");
+    if (binaryFormat) {
+        uint32_t binary_data_count = to!uint32_t(binary_data.length); // 4-byte count of bytes
+        binary_data_string ~= nativeToBigEndian(binary_data_count);
+        binary_data_string ~= binary_data;
+        binary_data_offset += 4 + binary_data.length;
+    }
+    fp.write("</Cells>\n");
+    //
+    fp.write("<CellData>\n");
+    // Write variables from the dictionary.
+    foreach (ivar, var; variables) {
+        fp.writef(" <DataArray Name=\"%s\" type=\"Float32\" NumberOfComponents=\"1\"", var);
+        if (binaryFormat) {
+            fp.writef(" format=\"appended\" offset=\"%d\">", binary_data_offset);
+            binary_data.length = 0;
+        } else {
+            fp.write(" format=\"ascii\">\n");
+        }
+        foreach (i; 0 .. grid.ncells) {
+            if (binaryFormat) {
+                binary_data ~= nativeToBigEndian(to!float(uflowz(data[i][ivar])));
+            } else {
+                fp.writef(" %.18e\n", uflowz(data[i][ivar]));
+            }
+        } // end foreach i
+        fp.write(" </DataArray>\n");
+        if (binaryFormat) {
+            uint32_t binary_data_count = to!uint32_t(binary_data.length); // 4-byte count of bytes
+            binary_data_string ~= nativeToBigEndian(binary_data_count);
+            binary_data_string ~= binary_data;
+            binary_data_offset += 4 + binary_data.length;
+        }
+    } // end foreach var
+    fp.write("</CellData>\n");
+    fp.write("</Piece>\n");
+    fp.write("</UnstructuredGrid>\n");
+    if (binaryFormat) {
+        fp.write("<AppendedData encoding=\"raw\">\n");
+        fp.write('_');
+        fp.rawWrite(binary_data_string);
+        fp.write("</AppendedData>\n");
+    }
+    fp.write("</VTKFile>\n");
+    fp.close();
+    return;
+}

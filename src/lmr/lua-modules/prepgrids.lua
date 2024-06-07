@@ -40,7 +40,7 @@ importGridproConnectivity = gridproimport.importGridproConnectivity
 importGridproBCs = gridproimport.importGridproBCs
 
 local grid = require 'grid'
-Grid = grid.Grid
+RegisteredGrid = grid.RegisteredGrid
 connectGrids = grid.connectGrids
 connectionAsJSON = grid.connectionAsJSON
 identifyGridConnections = grid.identifyGridConnections
@@ -58,21 +58,17 @@ SBlock2UBlock = fluidblock.SBlock2UBlock
 connectBlocks = fluidblock.connectBlocks
 identifyBlockConnections = fluidblock.identifyBlockConnections
 
-local fbarray = require 'fbarray'
-FBArray = fbarray.FBArray
-FluidBlockArray = fbarray.FluidBlockArray
-
 local solidblock = require 'solidblock'
 SolidBlock = solidblock.SolidBlock
 SolidBlockArray = solidblock.SolidBlockArray
 
+local solidthermalmodel = require 'solidthermalmodel'
+ConstantPropertiesModel = solidthermalmodel.ConstantPropertiesModel
+registerSolidModels = solidthermalmodel.registerSolidModels
+
 local mpi = require 'mpi'
 mpiDistributeBlocks = mpi.mpiDistributeBlocks
 mpiDistributeFBArray = mpi.mpiDistributeFBArray
-
-local history = require 'history'
-setHistoryPoint = history.setHistoryPoint
-setSolidHistoryPoint = history.setSolidHistoryPoint
 
 local zones = require 'zones'
 ReactionZone = zones.ReactionZone
@@ -87,8 +83,6 @@ write_config_file = output.write_config_file
 write_times_file = output.write_times_file
 write_block_list_file = output.write_block_list_file
 write_mpimap_file = output.write_mpimap_file
-write_fluidBlockArrays_file = output.write_fluidBlockArrays_file
-write_shock_fitting_helper_files = output.write_shock_fitting_helper_files
 
 local prep_check = require 'prep_check'
 initTurbulence = prep_check.initTurbulence
@@ -107,6 +101,33 @@ function makeFluidBlocks()
       print("    makeFluidBlocks(): Do NOTHING when in prep-grid mode.")
    end
 end
+function makeSolidBlocks()
+   if verbosity >= 1 then
+      print("    makeSolidBlocks(): Do NOTHING when in prep-grid mode.")
+   end
+end
+function identifyBlockConnections()
+   if verbosity >= 1 then
+      print("    identifyBlockConnections(): Do NOTHING when in prep-grid mode.")
+   end
+end
+function setHistoryPoint()
+   if verbosity >= 1 then
+      print("    setHistoryPoint(): Do NOTHING when in prep-grid mode.")
+   end
+end
+function mpiDistributeBlocks()
+   if verbosity >= 1 then
+      print("    mpiDistributeBlocks(): Do NOTHING when in prep-grid mode.")
+   end
+end
+-- We also need to define the storage for special zones, otherwise prep-grid complains that they don't exist
+ignitionZones = {}
+reactionZones = {}
+turbulentZones = {}
+suppressReconstructionZones = {}
+suppressViscousStressesZones = {}
+_solidModels = {}
 
 -------------------------------------------------------------------------
 
@@ -116,7 +137,7 @@ gridArraysList = {} -- to hold GridArray objects
 connectionList = {}
 
 
-function registerGrid(o)
+function registerFluidGrid(o)
    -- Input:
    -- A single table with named items.
    -- grid: a StructuredGrid or UnstructuredGrid object that has been generated
@@ -131,11 +152,12 @@ function registerGrid(o)
    -- Returns:
    -- the grid id number so that we may assign it and use it when making connections.
    --
-   local rgrid = Grid:new(o)
+   o.fieldType = "fluid"
+   local rgrid = RegisteredGrid:new(o)
    return rgrid.id
-end -- function registerGrid
+end -- function registerFluidGrid
 
-function registerGridArray(o)
+function registerFluidGridArray(o)
    -- Input:
    -- A single table with named items.
    -- grid: a StructuredGrid object that has been generated or imported.
@@ -149,9 +171,71 @@ function registerGridArray(o)
    -- the id of GridArray object so that the user may use the interior pieces later in their script.
    local rga = GridArray:new(o)
    return rga.id
-end -- registerGridArray
+end -- registerFluidGridArray
 
 
+function registerSolidGrid(o)
+   -- Input:
+   -- A single table with named items.
+   -- grid: a StructuredGrid or UnstructuredGrid object that has been generated
+   --    or imported.
+   -- tag: a string to identify the grid later in the user's script
+   -- ssTag: a string that will be used to select the initial solid condition from
+   --    a dictionary when the SolidBlock is later constructed.
+   -- bcTags: a table of strings that will be used to attach boundary conditions
+   --    from a dictionary when the FluidBlock is later constructed.
+   -- modelTag: a string that will be used to select the solid thermal model
+   --    from a dictionary when the SolidBlock is later constructed.
+   --
+   -- Returns:
+   -- the grid id number so that we may assign it and use it when making connections.
+   --
+
+   -- This function does some translation of parameter names.
+   -- The user provides what seems sensible withing a registerSolidGrid function.
+   -- We re-pack the table here with the names expected by the back-end RegisteredGrid object.
+   t = {}
+   t.fieldType = "solid"
+   t.grid = o.grid
+   t.tag = o.tag
+   t.ssTag = o.ssTag
+   t.solidModelTag = o.modelTag
+   t.solidBCTags = o.bcTags
+   local rgrid = RegisteredGrid:new(t)
+   return rgrid.id
+end -- function registerSolidGrid
+
+function registerSolidGridArray(o)
+   -- Input:
+   -- A single table with named items.
+   -- grid: a StructuredGrid or UnstructuredGrid object that has been generated
+   --    or imported.
+   -- tag: a string to identify the grid later in the user's script
+   -- ssTag: a string that will be used to select the initial solid condition from
+   --    a dictionary when the SolidBlock is later constructed.
+   -- bcTags: a table of strings that will be used to attach boundary conditions
+   --    from a dictionary when the FluidBlock is later constructed.
+   -- modelTag: a string that will be used to select the solid thermal model
+   --    from a dictionary when the SolidBlock is later constructed.
+   --
+   -- Returns:
+   -- the id of GridArray object so that the user may use the interior pieces later in their script.
+   --
+   -- This function does some translation of parameter names.
+   -- The user provides what seems sensible withing a registerSolidGridArray function.
+   t = {}
+   t.fieldType = "solid"
+   t.grid = o.grid
+   t.tag = o.tag
+   t.ssTag = o.ssTag
+   t.solidModelTag = o.modelTag
+   t.solidBCTags = o.bcTags
+   t.nib = o.nib or 1
+   t.njb = o.njb or 1
+   t.nkb = o.nkb or 1
+   local rga = GridArray:new(t)
+   return rga.id
+end -- registerFluidGridArray
 -------------------------------------------------------------------------
 --
 -- IO functions to write the grid and connection files.
@@ -202,6 +286,44 @@ function writeGridFiles()
       f:write(g:tojson() .. '\n')
       f:close()
    end
+   --
+   local any = false
+   for i = 1, #gridArraysList do
+      local ga = gridArraysList[i]
+      if ga.shock_fitting then any = true end
+   end
+   if any then
+      print("  For shock-fitting, write rails and weights files.")
+   end
+   for i = 1, #gridArraysList do
+      local ga = gridArraysList[i]
+      if ga.shock_fitting then
+         local filename = string.format(lmrconfig.gridDirectory() .. "/gridarray-%04d.rails", ga.id)
+         local f = assert(io.open(filename, "w"))
+         f:write("# Rails are presently described by the initial west- and east-boundary coordinates.\n")
+         for k = 0, ga.nkv-1 do
+            for j = 0, ga.njv-1 do
+               local pw = ga.grid:get_vtx(0,j,k)
+               local pe = ga.grid:get_vtx(ga.niv-1,j,k)
+               f:write(string.format("%.18e %.18e %.18e %.18e %.18e %.18e\n",
+                                     pw.x, pw.y, pw.z, pe.x, pe.y, pe.z))
+            end
+         end
+         f:close()
+         local filename = string.format(lmrconfig.gridDirectory() .. "/gridarray-%04d.weights", ga.id)
+         local f = assert(io.open(filename, "w"))
+         f:write("# Weights represent the arc-length distance of each vertex from the east-boundary vertex.\n")
+         for k = 0, ga.nkv-1 do
+            for j = 0, ga.njv-1 do
+               for i = 0, ga.niv-1 do
+                  f:write(string.format("%.18e\n", ga.velocity_weights[i][j][k]))
+               end
+            end
+         end
+         f:close()
+      end
+   end
+   --
    print(string.format("  #grids %d", #gridsList))
    print(string.format("  #gridArrays %d", #gridArraysList))
 end

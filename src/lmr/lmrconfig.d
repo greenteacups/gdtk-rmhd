@@ -17,43 +17,49 @@ import json_helper : readJSONfile;
 import globalconfig;
 
 struct LmrCfg {
-    immutable string simDir;
-    immutable string jobFile;
-    immutable string cfgFile;
-    immutable string ctrlFile;
-    immutable string progFile;
-    immutable string nkCfgFile;
-    immutable string blkIdxFmt;
-    immutable string cellIdxFmt;
-    immutable string snapshotDir;
-    immutable string snapshotIdxFmt;
-    immutable string historyDir;
-    immutable string historyPrefix;
-    immutable int initialFieldDir;
-    immutable string flowMetadataFile;
-    immutable string limiterMetadataFile;
-    immutable string restartFile;
-    immutable string timesFile;
-    immutable string referenceResidualsFile;
-    immutable string flowPrefix;
-    immutable string limiterPrefix;
-    immutable string loadsPrefix;
-    immutable string gridPrefix;
-    immutable string gridDir;
-    immutable string gridDirectory;
-    immutable string gridMetadataFile;
-    immutable string savedSgridDir;
-    immutable string gzipExt;
-    immutable string blkListFile;
-    immutable string vtkDir;
-    immutable string mpimapFile;
-    immutable string mappedCellsFile;
-    immutable string dblVarFmt;
-    immutable string revisionId = "PUT_REVISION_STRING_HERE";
-    immutable string fullRevisionId = "PUT_FULL_REVISION_STRING_HERE";
-    immutable string revisionDate = "PUT_REVISION_DATE_HERE";
-    immutable string compilerName = "PUT_COMPILER_NAME_HERE";
-    immutable string buildDate = "PUT_BUILD_DATE_HERE";
+    shared immutable string simDir;
+    shared immutable string jobFile;
+    shared immutable string cfgFile;
+    shared immutable string ctrlFile;
+    shared immutable string progFile;
+    shared immutable string nkCfgFile;
+    shared immutable string blkIdxFmt;
+    shared immutable string cellIdxFmt;
+    shared immutable string snapshotDir;
+    shared immutable string snapshotIdxFmt;
+    shared immutable string historyDir;
+    shared immutable string historyPrefix;
+    shared immutable int initialFieldDir;
+    shared immutable string fluidMetadataFile;
+    shared immutable string solidMetadataFile;
+    shared immutable string limiterMetadataFile;
+    shared immutable string residualMetadataFile;
+    shared immutable string restartFile;
+    shared immutable string timesFile;
+    shared immutable string referenceResidualsFile;
+    shared immutable string fluidPrefix;
+    shared immutable string solidPrefix;
+    shared immutable string limiterPrefix;
+    shared immutable string residualPrefix;
+    shared immutable string loadsDir;
+    shared immutable string loadsPrefix;
+    shared immutable string gridPrefix;
+    shared immutable string gridDir;
+    shared immutable string gridDirectory;
+    shared immutable string gridMetadataFile;
+    shared immutable string savedSgridDir;
+    shared immutable string gzipExt;
+    shared immutable string blkListFile;
+    shared immutable string vtkDir;
+    shared immutable string mpimapFile;
+    shared immutable string mappedCellsFile;
+    shared immutable string transResidFile;
+    shared immutable string dblVarFmt;
+    shared immutable string revisionId = "PUT_REVISION_STRING_HERE";
+    shared immutable string fullRevisionId = "PUT_FULL_REVISION_STRING_HERE";
+    shared immutable string revisionDate = "PUT_REVISION_DATE_HERE";
+    shared immutable string compilerName = "PUT_COMPILER_NAME_HERE";
+    shared immutable string buildDate = "PUT_BUILD_DATE_HERE";
 };
 
 LmrCfg lmrCfg;
@@ -78,13 +84,18 @@ static this()
     lmrCfg.historyDir = lmrCfg.simDir ~ "/" ~ lmrJSONCfg["history-directory"].str;
     lmrCfg.historyPrefix = lmrJSONCfg["history-prefix"].str;
     lmrCfg.initialFieldDir = to!int(lmrJSONCfg["initial-field-directory"].integer);
-    lmrCfg.flowMetadataFile = lmrCfg.snapshotDir ~ "/" ~ lmrJSONCfg["flow-prefix"].str ~ lmrJSONCfg["metadata-extension"].str;
+    lmrCfg.fluidMetadataFile = lmrCfg.snapshotDir ~ "/" ~ lmrJSONCfg["fluid-prefix"].str ~ lmrJSONCfg["metadata-extension"].str;
+    lmrCfg.solidMetadataFile = lmrCfg.snapshotDir ~ "/" ~ lmrJSONCfg["solid-prefix"].str ~ lmrJSONCfg["metadata-extension"].str;
     lmrCfg.limiterMetadataFile = lmrCfg.snapshotDir ~ "/" ~ lmrJSONCfg["limiter-prefix"].str ~ lmrJSONCfg["metadata-extension"].str;
+    lmrCfg.residualMetadataFile = lmrCfg.snapshotDir ~ "/" ~ lmrJSONCfg["residual-prefix"].str ~ lmrJSONCfg["metadata-extension"].str;
     lmrCfg.restartFile = lmrCfg.snapshotDir ~ "/" ~ lmrJSONCfg["restart-filename"].str;
     lmrCfg.timesFile = lmrCfg.snapshotDir ~ "/" ~ lmrJSONCfg["times-filename"].str;
     lmrCfg.referenceResidualsFile = lmrCfg.snapshotDir ~ "/" ~ lmrJSONCfg["reference-residuals-file"].str;
-    lmrCfg.flowPrefix = lmrJSONCfg["flow-prefix"].str;
+    lmrCfg.fluidPrefix = lmrJSONCfg["fluid-prefix"].str;
+    lmrCfg.solidPrefix = lmrJSONCfg["solid-prefix"].str;
     lmrCfg.limiterPrefix = lmrJSONCfg["limiter-prefix"].str;
+    lmrCfg.residualPrefix = lmrJSONCfg["residual-prefix"].str;
+    lmrCfg.loadsDir = lmrCfg.simDir ~ "/" ~ lmrJSONCfg["loads-directory"].str;
     lmrCfg.loadsPrefix = lmrJSONCfg["loads-prefix"].str;
     lmrCfg.gridPrefix = lmrJSONCfg["grid-prefix"].str;
     lmrCfg.gridDir = lmrJSONCfg["grid-directory"].str;
@@ -96,6 +107,7 @@ static this()
     lmrCfg.vtkDir = lmrCfg.simDir ~ "/" ~ lmrJSONCfg["vtk-output-directory"].str;
     lmrCfg.mpimapFile = lmrCfg.simDir ~ "/" ~ lmrJSONCfg["mpimap-filename"].str;
     lmrCfg.mappedCellsFile = lmrCfg.simDir ~ "/" ~ lmrJSONCfg["mappedcells-filename"].str;
+    lmrCfg.transResidFile = lmrCfg.simDir ~ "/" ~ lmrJSONCfg["transient-residuals-filename"].str;
     lmrCfg.dblVarFmt = lmrJSONCfg["double-var-format"].str;
 
 
@@ -122,26 +134,44 @@ void readLmrConfig()
 string snapshotDirectory(int snapshot)
 {
     return lmrCfg.snapshotDir ~
-	"/" ~
-	format(lmrCfg.snapshotIdxFmt, snapshot);
+    	"/" ~
+	    format(lmrCfg.snapshotIdxFmt, snapshot);
 }
 
 
 /**
- * Return the flow solution filename for a single block ('blkId') as a string.
+ * Return the fluid solution filename for a single block ('blkId') as a string.
  *
  * Authors: RJG
  * Date: 2023-06-27
  */
-string flowFilename(int snapshot, int blkId)
+string fluidFilename(int snapshot, int blkId)
 {
     string fname = lmrCfg.snapshotDir ~
-	"/" ~
-	format(lmrCfg.snapshotIdxFmt, snapshot) ~
-	"/" ~
-	lmrCfg.flowPrefix ~ "-" ~ format(lmrCfg.blkIdxFmt, blkId);
-    if (GlobalConfig.flow_format == "gziptext")
-	fname ~= lmrCfg.gzipExt;
+        "/" ~
+    	format(lmrCfg.snapshotIdxFmt, snapshot) ~
+	    "/" ~
+	    lmrCfg.fluidPrefix ~ "-" ~ format(lmrCfg.blkIdxFmt, blkId);
+    if (GlobalConfig.field_format == "gziptext")
+	    fname ~= lmrCfg.gzipExt;
+    return fname;
+}
+
+/**
+ * Return the solid solution filename for a single block ('blkId') as a string.
+ *
+ * Authors: RJG
+ * Date: 2024-02-25
+ */
+string solidFilename(int snapshot, int blkId)
+{
+    string fname = lmrCfg.snapshotDir ~
+    	"/" ~
+	    format(lmrCfg.snapshotIdxFmt, snapshot) ~
+	    "/" ~
+	    lmrCfg.solidPrefix ~ "-" ~ format(lmrCfg.blkIdxFmt, blkId);
+    if (GlobalConfig.field_format == "gziptext")
+	    fname ~= lmrCfg.gzipExt;
     return fname;
 }
 
@@ -154,34 +184,49 @@ string flowFilename(int snapshot, int blkId)
 string limiterFilename(int snapshot, int blkId)
 {
     string fname = lmrCfg.snapshotDir ~
-	"/" ~
-	format(lmrCfg.snapshotIdxFmt, snapshot) ~
-	"/" ~
-	lmrCfg.limiterPrefix ~ "-" ~ format(lmrCfg.blkIdxFmt, blkId);
-    if (GlobalConfig.flow_format == "gziptext")
-	fname ~= lmrCfg.gzipExt;
+    	"/" ~
+	    format(lmrCfg.snapshotIdxFmt, snapshot) ~
+	    "/" ~
+	    lmrCfg.limiterPrefix ~ "-" ~ format(lmrCfg.blkIdxFmt, blkId);
+    if (GlobalConfig.field_format == "gziptext")
+	    fname ~= lmrCfg.gzipExt;
     return fname;
 }
 
+/**
+ * Return the residual values filename for a single block ('blkId') as a string.
+ *
+ * Authors: KAD and RJG
+ * Date: 2024-03-07
+ */
+string residualFilename(int snapshot, int blkId)
+{
+    string fname = lmrCfg.snapshotDir ~
+        "/" ~
+        format(lmrCfg.snapshotIdxFmt, snapshot) ~
+        "/" ~
+        lmrCfg.residualPrefix ~ "-" ~ format(lmrCfg.blkIdxFmt, blkId);
+    if (GlobalConfig.field_format == "gziptext")
+        fname ~= lmrCfg.gzipExt;
+    return fname;
+}
 /**
  * Return the loads filename for a single block+boundary combo as a string.
  *
  * Authors: RJG
  * Date: 2023-11-19
  */
-string loadsFilename(int snapshot, int blkId, size_t bndryId, string group)
+string loadsFilename(int tindx, int blkId, int bndryId, string group)
 {
-    string fname = lmrCfg.snapshotDir ~
-	"/" ~
-	format(lmrCfg.snapshotIdxFmt, snapshot) ~
-	"/" ~
-	lmrCfg.loadsPrefix ~
-	"-blk-" ~ format(lmrCfg.blkIdxFmt, blkId) ~
-	"-bndry-" ~ format("%d", bndryId) ~
-	"-" ~ group ~ ".dat";
+    string fname = lmrCfg.loadsDir ~
+        "/" ~ format(lmrCfg.snapshotIdxFmt, tindx) ~
+        "/" ~
+        "blk-" ~ format(lmrCfg.blkIdxFmt, blkId) ~
+        "-bndry-" ~ format("%d", bndryId) ~
+        "-" ~ group ~
+         ".dat";
     return fname;
 }
-
 /**
  * Return the grid filename for a single block ('id') as a string.
  *
@@ -191,12 +236,11 @@ string loadsFilename(int snapshot, int blkId, size_t bndryId, string group)
 string gridFilename(int snapshot, int blkId)
 {
     string gname = lmrCfg.snapshotDir ~
-	"/" ~
-	format(lmrCfg.snapshotIdxFmt, snapshot) ~
-	"/" ~
-	lmrCfg.gridPrefix ~ "-" ~ format(lmrCfg.blkIdxFmt, blkId);
-    if (GlobalConfig.grid_format == "gziptext")
-	gname ~= lmrCfg.gzipExt;
+        "/" ~
+        format(lmrCfg.snapshotIdxFmt, snapshot) ~
+        "/" ~
+        lmrCfg.gridPrefix ~ "-" ~ format(lmrCfg.blkIdxFmt, blkId);
+    if (GlobalConfig.grid_format == "gziptext") gname ~= lmrCfg.gzipExt;
     return gname;
 }
 
@@ -205,11 +249,16 @@ string gridFilename(int snapshot, int blkId)
  *
  * Authors: RJG
  * Date: 2024-02-07
+ * History:
+ *    2024-03-19 -- remove hist prefix,
+ *                  we think it's somewhat obvious
+ *                  given these files live in a hist/ area
  */
 string historyFilename(size_t blkId, size_t cellId)
 {
-    string hname = lmrCfg.historyDir ~
-	"/" ~
-	lmrCfg.historyPrefix ~ "-blk-" ~ format(lmrCfg.blkIdxFmt, blkId) ~ "-cell-" ~ format(lmrCfg.cellIdxFmt, cellId) ~ ".dat";
+    string hname = lmrCfg.historyDir ~ "/" ~
+         "blk-" ~ format(lmrCfg.blkIdxFmt, blkId) ~
+         "-cell-" ~ format(lmrCfg.cellIdxFmt, cellId) ~
+         ".dat";
     return hname;
 }

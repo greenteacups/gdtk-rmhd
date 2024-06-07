@@ -4,10 +4,18 @@ import std.algorithm;
 
 import lmrconfig;
 import command;
-import checkjacobian;
 import computenorms;
+import customscript;
 import probeflow;
+import sliceflow;
+import extractline;
 import limiter2vtk;
+import residual2vtk;
+import lmr.commands.listspecies;
+import lmr.commands.prepenergyexchange;
+import lmr.commands.prepgas;
+import lmr.commands.prepreactions;
+import lmr.commands.slicesolid;
 import prepgrids;
 import prepsim;
 import prepmappedcells;
@@ -46,61 +54,95 @@ Show help for a given Eilmer command or topic.
     // Try to add commands in alphabetical order from here down.
     // 1. Add user commands
     commands["compute-norms"] = compNormsCmd;
-    commands["probe-flow"] = probeFlowCmd;
+    commands["custom-script"] = customScriptCmd;
+    commands["extract-line"] = extractLineCmd;
     commands["limiter2vtk"] = limiter2vtkCmd;
+    commands["list-species"] = listSpeciesCmd;
+    // alias for list-species, provided for consistency with prep-gas tool
+    commands["list-available-species"] = commands["list-species"];
+    commands["residual2vtk"] = residual2vtkCmd;
+    commands["prep-energy-exchange"] = prepExchCmd;
+    // alias for 'prep-energy-exchange' provided for consistency with prep-kinetics tool
+    commands["prep-kinetics"] = commands["prep-energy-exchange"];
+    commands["prep-gas"] = prepGasCmd;
     commands["prep-grids"] = prepGridCmd;
     commands["prep-grid"] = commands["prep-grids"]; // alias for prep-grids
+    commands["prep-reactions"] = prepReacCmd;
+    // alias for 'prep-reactions' provided for consistency with prep-chem tool
+    commands["prep-chem"] = commands["prep-reactions"];
     commands["prep-sim"] = prepSimCmd;
     commands["prep-flow"] = commands["prep-sim"]; // alias for prep-sim
     commands["prep-mapped-cells"] = prepMappedCellsCmd;
+    commands["probe-flow"] = probeFlowCmd;
     commands["revision-id"] = revisionIdCmd;
     commands["run"] = runCmd;
+    commands["slice-flow"] = sliceFlowCmd;
+    // alias for slice-flow because fluid comes naturally when also working with solids
+    commands["slice-fluid"] = commands["slice-flow"];
+    commands["slice-solid"] = sliceSolidCmd;
     commands["snapshot2vtk"] = snapshot2vtkCmd;
     commands["structured2unstructured"] = structured2unstructuredCmd;
     // add alias for structured2unstructured
     commands["sgrid2ugrid"] = commands["structured2unstructured"];
     // 2. Add dev/diag commands
-    commands["check-jacobian"] = checkJacCmd;
 }
 
-void main(string[] args)
+int main(string[] args)
 {
     bool helpWanted = false;
     bool versionWanted = false;
     bool versionLongWanted = false;
     NumberType numberType;
-    getopt(args,
-           std.getopt.config.stopOnFirstNonOption,
-           "h|help", &helpWanted,
-           "v|version", &versionWanted,
-           "version-long", &versionLongWanted,
-           "number-type", &numberType
-    );
-
-    if (args.length < 2) {
-        // Nothing asked for. Print help and exit.
-        printHelp(args);
-        return;
+    try {
+        getopt(args,
+               std.getopt.config.stopOnFirstNonOption,
+               "h|help", &helpWanted,
+               "v|version", &versionWanted,
+               "version-long", &versionLongWanted,
+               "number-type", &numberType
+               );
+    } catch (Exception e) {
+        writeln("Eilmer top-level program quitting.");
+        writeln("There is something wrong with the command-line arguments/options.");
+        writeln(e.msg);
+        writeln("");
+        printHelp([""]);
+        return 1;
     }
 
     if (versionLongWanted) {
         printVersion(false);
-        return;
+        if (helpWanted || canFind(args, "help")) {
+            writeln("");
+            printHelp([""]); // general help
+        }
+        return 0;
     }
     else if (versionWanted) {
         printVersion();
-        return;
+        if (helpWanted || canFind(args, "help")) {
+            writeln("");
+            printHelp([""]); // general help
+        }
+        return 0;
     }
-    if (helpWanted) printHelp(args);
+
+    if (args.length < 2) {
+        writeln("Eilmer top-level program quitting.");
+        writeln("No subcommand supplied as the first command-line argument.");
+        writeln("");
+        printHelp([""]); // general help
+        return 1;
+    }
 
     // Special cases for version options written as commands.
     if (args[1] == "version-long") {
         printVersion(false);
-        return;
+        return 0;
     }
     else if (args[1] == "version") {
         printVersion();
-        return;
+        return 0;
     }
 
     if (args[1].startsWith("--number-type")) {
@@ -120,7 +162,7 @@ void main(string[] args)
     }
     // If we've made it here, then we've chosen a bad command.
     writefln("lmr: '%s' is not an lmr command. See 'lmr help'.", cmd);
-    return;
+    return 1;
 }
 
 void listHelpForAllCommands()
@@ -147,33 +189,38 @@ void listHelpForAllCommands()
     writefln("   %-24s Print full version information about lmr program.", "version-long");
 }
 
-void printHelp(string[] args)
+int printHelp(string[] args)
 {
     if (args.length >= 3) {
         auto arg = args[2];
         if (arg == "-a" || arg == "--all") {
             // list all commands with short description.
             listHelpForAllCommands();
-            return;
+            return 0;
         }
         // Next look to see if a command has been supplied.
         if (arg in commands) {
             writeln(commands[arg].helpMsg);
-            return;
+            return 0;
         }
         // If we've made it here, then we've chosen a bad command.
         writefln("lmr: '%s' is not an lmr command. See 'lmr help'.", arg);
     }
     // else just print general help
     string generalHelp =
-`usage: lmr [-h | --help] [help -a]
+`== Eilmer simulation program ==
+
+Usage: lmr [-h | --help] [help -a]
            [-v | --version] [--version-long]
            [--number-type=real_values|complex_values]
             <command> [<args>]
 
-== Eilmer simulation program ==
+Examples:
+lmr help             ==> prints this general help
+lmr help -a          ==> lists all commands
+lmr help <command>   ==> prints help for <command>
 
-List of commonly used commands:
+== Commonly used commands ==
 
 at preparation stage
    prep-grids      build grids for simulation
@@ -185,6 +232,8 @@ at simulation stage
 at post-processing stage
    snapshot2vtk    convert a snapshot to VTK format for visualisation
    probe-flow      reports the flow-field data at specified location(s)
+   slice-flow      reports the flow-field data along slices, in index directions
+   extract-line    reports the flow-field data along lines in 3D space
 
 == Notes ==
 --number-type option, if used, must appear before "run" command.
@@ -193,29 +242,27 @@ It is advanced usage to control delegation of "run" to lmr-run
 
 `;
     write(generalHelp);
-    return;
-
+    return 0;
 }
 
 
 void printVersion(bool shortVersion=true)
 {
     if (GlobalConfig.is_master_task) {
-        writeln("Eilmer 4.0 compressible-flow simulation code.");
+        writeln("Eilmer 5.0 compressible-flow simulation code.");
         writeln("Revision-id: ", lmrCfg.revisionId);
         writeln("Revision-date: ", lmrCfg.revisionDate);
         writeln("Compiler-name: ", lmrCfg.compilerName);
         writeln("Build-date: ", lmrCfg.buildDate);
-
-        if (shortVersion) return;
-
         write("Build-flavour: ");
         version(flavour_debug) { writeln("debug"); }
         version(flavour_profile) { writeln("profile"); }
         version(flavour_fast) { writeln("fast"); }
         write("Profiling: ");
         version(diagnostics) { writeln("included"); } else { writeln("omitted"); }
-        //
+
+        if (shortVersion) return;
+
         writeln("Capabilities:");
         version(multi_species_gas) {
             writeln("   multi-species-gas");

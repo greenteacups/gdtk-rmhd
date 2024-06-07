@@ -17,10 +17,13 @@ import std.math : FloatingPointControl;
 import std.parallelism : parallel;
 import std.algorithm : min;
 import std.file;
-import std.math : floor;
+import std.math;
 import std.format : format, formattedWrite;
-import std.array : appender;
+import std.array : appender, split;
+import std.string : splitLines;
+import dyaml;
 
+import ntypes.complex;
 import util.time_utils : timeStringToSeconds;
 import nm.number : number;
 import conservedquantities : new_ConservedQuantities;
@@ -31,7 +34,10 @@ import simcore : check_run_time_configuration,
        call_UDF_at_write_to_file,
        update_ch_for_divergence_cleaning,
        set_mu_and_k,
-       chemistry_step;
+       chemistry_step,
+       compute_Linf_residuals,
+       compute_L2_residual,
+       compute_mass_balance;
 import simcore_gasdynamic_step : sts_gasdynamic_explicit_increment_with_fixed_grid,
        gasdynamic_explicit_increment_with_fixed_grid,
        gasdynamic_implicit_increment_with_fixed_grid,
@@ -51,27 +57,29 @@ import globalconfig;
 import globaldata;
 import init;
 import fileutil : ensure_directory_is_present;
-import blockio : blkIO;
-import loads : computeRunTimeLoads;
+import lmr.loads : computeRunTimeLoads,
+       init_current_loads_indx_dir,
+       wait_for_current_indx_dir,
+       writeLoadsToFile,
+       count_written_loads,
+       update_loads_metadata_file;
+import lmr.fvcell : FVCell;
+import lmr.history : initHistoryCells, writeHistoryCellsToFiles;
+
+version(mpi_parallel) {
+    import mpi;
+}
 
 void initTimeMarchingSimulation(int snapshotStart, int maxCPUs, int threadsPerMPITask, string maxWallClock)
 {
     alias cfg = GlobalConfig;
     if (cfg.verbosity_level > 0 && cfg.is_master_task) {
-	writeln("lmr run: Begin initTimeMarchingSimulation()...");
+        writeln("lmr run: Begin initTimeMarchingSimulation()...");
     }
 
     SimState.is_restart = (snapshotStart > 0);
     SimState.maxWallClockSeconds = timeStringToSeconds(maxWallClock);
     SimState.wall_clock_start = Clock.currTime();
-
-    version(enable_fp_exceptions) {
-        FloatingPointControl fpctrl;
-        // Enable hardware exceptions for division by zero, overflow to infinity,
-        // invalid operations, and uninitialized floating-point variables.
-        // Copied from https://dlang.org/library/std/math/floating_point_control.html
-        fpctrl.enableExceptions(FloatingPointControl.severeExceptions);
-    }
 
     // Initialise baseline configuration
     initConfiguration();
@@ -81,37 +89,24 @@ void initTimeMarchingSimulation(int snapshotStart, int maxCPUs, int threadsPerMP
     // and read the control because it sets up part of initial configuration
     readControl();
     // [TODO] RJG, 2024-02-07
-    // Implement opening of progress file and residuals files
-    // somewhere in the initialisation.
+    // Implement opening of progress file.
+
+    if (GlobalConfig.writeTransientResiduals && GlobalConfig.is_master_task && (snapshotStart == 0)) {
+        std.file.write(lmrCfg.transResidFile, "# step time wall-clock mass x-mom y-mom z-mom energy L2 mass-balance\n");
+    }
 
     SimState.current_tindx = snapshotStart;
 
-    // [TODO] RJG, 2024-02-07
-    // Implement initialisation of the loads file.
-    // Commented code below is taken from eilmer4;
-    // it will need some rework.
-    /* taken on 2024-02-07
-    SimState.current_loads_tindx = nextLoadsIndx;
-    if (SimState.current_loads_tindx == -1) {
-        // This is used to indicate that we should look at the old -loads.times file
-        // to find the index where the previous simulation stopped.
-        string fname = "loads/" ~ GlobalConfig.base_file_name ~ "-loads.times";
-        if (exists(fname)) {
-            auto finalLine = readText(fname).splitLines()[$-1];
-            if (finalLine[0] == '#') {
-                // looks like we found a single comment line.
-                SimState.current_loads_tindx = 0;
-            } else {
-                // assume we have a valid line to work with
-                SimState.current_loads_tindx = to!int(finalLine.split[0]) + 1;
-            }
-        } else {
-            SimState.current_loads_tindx = 0;
-        }
+    if (SimState.current_tindx == 0) {
+        // On a fresh start, set loads tindx to 0
+        SimState.current_loads_tindx = 0;
     }
-    end: code from eilmer4 for loads file initialisation */
+    else {
+        // We'll need to work a little harder and find out how many loads we've already written.
+        SimState.current_loads_tindx = count_written_loads();
+    }
 
-    initLocalFluidBlocks();
+    initLocalBlocks();
     initThreadPool(maxCPUs, threadsPerMPITask);
     initFluidBlocksBasic(true);
     initFluidBlocksMemoryAllocation();
@@ -121,8 +116,6 @@ void initTimeMarchingSimulation(int snapshotStart, int maxCPUs, int threadsPerMP
     initFluidBlocksGlobalCellIDStarts();
     initFluidBlocksZones();
     initFluidBlocksFlowField(snapshotStart);
-    initSimStateTime(snapshotStart);
-
 
     initFullFaceDataExchange();
     initMappedCellDataExchange();
@@ -133,24 +126,19 @@ void initTimeMarchingSimulation(int snapshotStart, int maxCPUs, int threadsPerMP
     // Here is where initialise GPU chemistry, if we are going to continue
     // with that particular implementation.
 
-    // [TODO] RJG, 2024-04-07
-    // NO SOLID BLOCKS PRESENTLY.
-    // We'll try to get those in soon.
+    if (cfg.nSolidBlocks > 0) {
+        initSolidBlocks();
+        initFluidSolidExchangeBoundaries();
+    }
 
-    // [TODO] RJG, 2024-02-12
-    // Re-implement writing to history cells.
-    /*
     initHistoryCells();
-    */
 
-    // [TODO] RJG, 2024-02-07
-    // Implement initialisation of loads files.
+    if (GlobalConfig.write_loads && (SimState.current_loads_tindx == 0)) {
+        if (GlobalConfig.is_master_task) {
+            initLoadsFiles();
+        }
+    }
 
-    // [TODO] RJG, 2024-02-07
-    // Implement initialisation of shock-fitting. This involves reading
-    // rails and velocity weights.
-    // Commented code is from Eilmer4
-    /* taken on 2024-02-07
     // For a simulation with shock fitting, the files defining the rails for
     // vertex motion and the scaling of vertex velocities throughout the blocks
     // will have been written by prep.lua + output.lua.
@@ -165,12 +153,12 @@ void initTimeMarchingSimulation(int snapshotStart, int maxCPUs, int threadsPerMP
                     // that communicator.
                     MPI_Comm_split(MPI_COMM_WORLD, to!int(i), 0, &(fba.mpicomm));
                 }
-                fba.read_rails_file(format("config/fba-%04d.rails", i));
-                fba.read_velocity_weights(format("config/fba-%04d.weights", i));
+                // FIX-ME 2024-02-28 PJ Make use of Rowan's config information to find files.
+                fba.read_rails_file(format("lmrsim/grid/gridarray-%04d.rails", i));
+                fba.read_velocity_weights(format("lmrsim/grid/gridarray-%04d.weights", i));
             }
         }
     }
-    end: code from Eilmer4 for shock-fitting setup reading. */
 
     // [TODO] RJG, 2024-02-07
     // When we have solid domains in place, we'll need to implement the initialisation of
@@ -187,6 +175,29 @@ void initTimeMarchingSimulation(int snapshotStart, int maxCPUs, int threadsPerMP
     // If we have elected to run with a variable time step,
     // this value may get revised on the very first step.
     SimState.dt_global = GlobalConfig.dt_init;
+    // dt_global will be updated if restart branch is selected below.
+
+    if (!SimState.is_restart) {
+        SimState.time = 0.0;
+        SimState.step = 0;
+        if (cfg.is_master_task) {
+            // Clean out any existing times file.
+            if (lmrCfg.timesFile.exists) lmrCfg.timesFile.remove;
+            // We can put an initial entry in the times file now.
+            addToTimesFile();
+        }
+    }
+    else {
+        // SimState.time, SimState.step and SimState.dt_global set in prepareTimesFileOnRestart
+        // It's convenient to do that while we have the times file loaded.
+        prepareTimesFileOnRestart(SimState.current_tindx);
+        if (cfg.is_master_task) {
+            writeln("*** RESTARTING SIMULATION ***");
+            writefln("RESTART-SNAPSHOT: %d", SimState.current_tindx);
+            writefln("RESTART-STEP: %d", SimState.step);
+            writefln("RESTART-TIME: %8.3e", SimState.time);
+        }
+    }
 
     initMasterLuaState();
     initCornerCoordinates();
@@ -257,8 +268,6 @@ int integrateInTime(double targetTimeAsRequested)
     SimState.t_plot = SimState.time + GlobalConfig.dt_plot;
     SimState.t_history = SimState.time + GlobalConfig.dt_history;
     SimState.t_loads = SimState.time + GlobalConfig.dt_loads;
-    // Overall iteration count.
-    SimState.step = 0;
     //
     if (GlobalConfig.viscous) {
         // We have requested viscous effects but their application may be delayed
@@ -461,15 +470,12 @@ int integrateInTime(double targetTimeAsRequested)
                     stdout.flush();
                 }
                 version(mpi_parallel) { MPI_Barrier(MPI_COMM_WORLD); }
-                // [TODO] RJG, 2024-02-07
-                // Disable residual reporting just for now.
-                // The question is whether this should be harmonised with the steady-state solver.
-                /*
-                if (GlobalConfig.report_residuals) {
+
+                if (GlobalConfig.writeTransientResiduals) {
                     // We also compute the residual information and write to residuals file.
                     // These data can be used to monitor the progress of a steady-state calculation.
                     compute_mass_balance(mass_balance);
-		    compute_L2_residual(L2_residual);
+	                compute_L2_residual(L2_residual);
                     compute_Linf_residuals(Linf_residuals);
                     auto cqi = GlobalConfig.cqi;
                     version(mpi_parallel) {
@@ -483,13 +489,12 @@ int integrateInTime(double targetTimeAsRequested)
                         my_local_value = mass_balance.re;
                         MPI_Allreduce(MPI_IN_PLACE, &my_local_value, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
                         mass_balance.re = my_local_value;
-			my_local_value = L2_residual.re;
+                        my_local_value = L2_residual.re;
                         MPI_Allreduce(MPI_IN_PLACE, &my_local_value, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
                         L2_residual.re = my_local_value;
-		    }
+                    }
                     L2_residual = sqrt(L2_residual);
                     if (GlobalConfig.is_master_task) {
-                        string residualsFile = "config/"~GlobalConfig.base_file_name~"-residuals.txt";
                         string txt = format("%7d %10.6e %10.6e %10.6e %10.6e %10.6e %10.6e %10.6e %10.6e %10.6e\n",
                                             SimState.step, SimState.time, wall_clock_elapsed,
                                             Linf_residuals[cqi.mass].re,
@@ -498,10 +503,9 @@ int integrateInTime(double targetTimeAsRequested)
                                             (cqi.threeD) ? Linf_residuals[cqi.zMom].re : 0.0,
                                             Linf_residuals[cqi.totEnergy].re,
                                             fabs(L2_residual.re), fabs(mass_balance.re));
-                        std.file.append(residualsFile, txt);
+                        std.file.append(lmrCfg.transResidFile, txt);
                     }
-                } // end if report_residuals
-                */
+                } // end if writeTransienResiduals
                 version(mpi_parallel) { MPI_Barrier(MPI_COMM_WORLD); }
                 if (GlobalConfig.with_super_time_stepping) {
                     if (GlobalConfig.is_master_task) {
@@ -562,43 +566,30 @@ int integrateInTime(double targetTimeAsRequested)
                 GC.minimize();
             }
             */
-            //
             // 4.2 (Occasionally) Write out the cell history data and loads on boundary groups data
-            /* RJG, 2024-02-12  commented out during initial testing.
             if ((SimState.time >= SimState.t_history) && !SimState.history_just_written) {
                 version(FSI) {
                     foreach (FEMModel; FEMModels) {
                         FEMModel.WriteFSIToHistory(SimState.time);
                     }
                 }
-                write_history_cells_to_files(SimState.time);
+                writeHistoryCellsToFiles(SimState.time);
                 SimState.history_just_written = true;
                 SimState.t_history = SimState.t_history + GlobalConfig.dt_history;
                 GC.collect();
                 GC.minimize();
             }
-            */
 
-            /* RJG, 2024-02-12  commented out during initial testing.
             if (GlobalConfig.write_loads &&
                 ( ((SimState.time >= SimState.t_loads) && !SimState.loads_just_written) ||
                   SimState.step == GlobalConfig.write_loads_at_step )) {
-                if (GlobalConfig.is_master_task) {
-                    init_current_loads_tindx_dir(SimState.current_loads_tindx);
-                }
-                version(mpi_parallel) { MPI_Barrier(MPI_COMM_WORLD); }
-                wait_for_current_tindx_dir(SimState.current_loads_tindx);
-                write_boundary_loads_to_file(SimState.time, SimState.current_loads_tindx);
-                if (GlobalConfig.is_master_task) {
-                    update_loads_times_file(SimState.time, SimState.current_loads_tindx);
-                }
+                writeLoadsFiles_timemarching();
                 SimState.loads_just_written = true;
                 SimState.current_loads_tindx = SimState.current_loads_tindx + 1;
                 SimState.t_loads = SimState.t_loads + GlobalConfig.dt_loads;
                 GC.collect();
                 GC.minimize();
             }
-            */
 
             /* RJG, 2024-02-12  commented out during initial testing.
             //
@@ -669,22 +660,27 @@ int integrateInTime(double targetTimeAsRequested)
             MPI_Allreduce(MPI_IN_PLACE, &localFinishFlag, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
             finished_time_stepping = to!bool(localFinishFlag);
         }
-        if(finished_time_stepping && GlobalConfig.verbosity_level >= 1 && GlobalConfig.is_master_task) {
+        if(finished_time_stepping && GlobalConfig.is_master_task) {
             // Make an announcement about why we are finishing time-stepping.
-            write("Integration stopped: ");
+            write("STOP-REASON: ");
             if (caughtException) {
                 writeln("An exception was caught during the time step.");
             }
             if (SimState.time >= SimState.target_time) {
+                writefln("maximum-time");
                 writefln("Reached target simulation time of %g seconds.", SimState.target_time);
             }
             if (SimState.step >= GlobalConfig.max_step) {
+                writefln("maximum-steps");
                 writefln("Reached maximum number of steps with step=%d.", SimState.step);
             }
             if (GlobalConfig.halt_now == 1) { writeln("Halt set in control file."); }
             if (SimState.maxWallClockSeconds > 0 && (wall_clock_elapsed > SimState.maxWallClockSeconds)) {
+                writefln("maximum-wall-clock");
                 writefln("Reached maximum wall-clock time with elapsed time %s.", to!string(wall_clock_elapsed));
             }
+            writefln("FINAL-STEP: %d", SimState.step);
+            writefln("FINAL-TIME: %g", SimState.time);
             stdout.flush();
         }
     } // end while !finished_time_stepping
@@ -721,6 +717,32 @@ int integrateInTime(double targetTimeAsRequested)
 }
 
 /**
+ * This function writes the loads files
+ *
+ * Authors: KAD
+ * Date: 2024-03-15
+ */
+void writeLoadsFiles_timemarching()
+{
+    alias cfg = GlobalConfig;
+    if (cfg.is_master_task) {
+        writefln("++++++++++++++++++++++++++++++++++++++++++++++++++++++++");
+        writefln("+   Writing loads at step = %6d; t = %8.3e s    +", SimState.step, SimState.time);
+        writefln("++++++++++++++++++++++++++++++++++++++++++++++++++++++++");
+    }
+
+    if (cfg.is_master_task) {
+        init_current_loads_indx_dir(SimState.current_loads_tindx);
+    }
+    version(mpi_parallel) { MPI_Barrier(MPI_COMM_WORLD); }
+    wait_for_current_indx_dir(SimState.current_loads_tindx);
+    writeLoadsToFile(SimState.time, SimState.current_loads_tindx);
+    if (cfg.is_master_task) {
+        update_loads_metadata_file(SimState.time, SimState.step, SimState.current_loads_tindx);
+    }
+}
+
+/**
  * This function writes the flow field files, but also takes care of accompanying step <-> time mapping.
  *
  * Authors: RJG
@@ -730,9 +752,8 @@ void writeSnapshotFiles_timemarching()
 {
     alias cfg = GlobalConfig;
     if (cfg.is_master_task) {
-        writeln();
         writefln("++++++++++++++++++++++++++++++++++++++++++++++++++++++++");
-        writefln("+   Writing snapshot at step = %4d; t = %8.3e s   +", SimState.step, SimState.time);
+        writefln("+   Writing snapshot at step = %6d; t = %8.3e s +", SimState.step, SimState.time);
         writefln("++++++++++++++++++++++++++++++++++++++++++++++++++++++++");
     }
 
@@ -747,28 +768,102 @@ void writeSnapshotFiles_timemarching()
     // Wait for master to complete building the directory for the next snapshot
     version(mpi_parallel) { MPI_Barrier(MPI_COMM_WORLD); }
 
-    foreach (blk; localFluidBlocks) {
-        auto fileName = flowFilename(SimState.current_tindx, blk.id);
-        blkIO.writeVariablesToFile(fileName, blk.cells);
+    foreach (blk; localFluidBlocksBySize) { // 2024-03-05 PJ remove parallel
+        auto fileName = fluidFilename(SimState.current_tindx, blk.id);
+        FVCell[] cells;
+        cells.length = blk.cells.length;
+        foreach (i, ref c; cells) c = blk.cells[i];
+        fluidBlkIO.writeVariablesToFile(fileName, cells);
     }
 
+    if (cfg.grid_motion != GridMotion.none) {
+        foreach (blk; localFluidBlocksBySize) { // 2024-03-05 PJ remove parallel
+            blk.sync_vertices_to_underlying_grid(0);
+            auto gridName = gridFilename(SimState.current_tindx, blk.id);
+            blk.write_underlying_grid(gridName);
+        }
+    }
+
+    foreach (blk; localSolidBlocks) { // 2024-03-05 PJ remove parallel
+        auto filename = solidFilename(SimState.current_tindx, blk.id);
+        FVCell[] cells;
+        cells.length = blk.cells.length;
+        foreach (i, ref c; cells) c = blk.cells[i];
+        solidBlkIO.writeVariablesToFile(filename, cells);
+    }
+
+    if (cfg.is_master_task) {
+        addToTimesFile();
+    }
+}
+
+/**
+ * Add an entry in the times file.
+ *
+ * NOTE:
+ * What happens if this is a restart from some earlier tindx?
+ * Perhaps there is already an entry for this particular tindx (from a previous run).
+ * Using YAML, we just stick the duplicate key at the end.
+ * The parsers should hold onto the *last* duplicate key they find, which is what we want on restarted sims.
+ * We might need to think about properly scrubbing the file during initialisation.
+ *
+ * Author: Rowan J. Gollan
+ * Date: 2024-02-24
+ */
+
+void addToTimesFile()
+{
     // Add entry in times file
-    // What happens if this is a restart from some earlier tindx?
-    // Perhaps there is already an entry for this particular tindx (from a previous run).
-    // Using YAML, we just stick the duplicate key at the end.
-    // The parsers should hold onto the *last* duplicate key they find, which is what we want on restarted sims.
-    // We might need to think about properly scrubbing the file during initialisation.
     auto f = File(lmrCfg.timesFile, "a");
     string key = format(lmrCfg.snapshotIdxFmt, SimState.current_tindx);
-    f.writeln(key);
+    f.writefln("'%s':", key);
+    f.writefln("   step: %d", SimState.step);
     f.writefln("   time: %.18e", SimState.time);
     f.writefln("   dt:   %.18e", SimState.dt_global);
-    f.writefln("   cfl:  %.18e", SimState.cfl_max);
-    auto wall_clock_elapsed = (Clock.currTime() - SimState.wall_clock_start).total!"seconds"();
-    f.writefln("   wall-clock-elaped: %g", wall_clock_elapsed);
+    if (isNaN(SimState.cfl_max)) {
+        // Then it has never been set.
+        // This might occur on initialisation, or if we are running with fixed timestepping.
+        // Put a value of -1.0 as the signal to outside world.
+        f.writeln("   cfl:  -1.0");
+    }
+    else {
+        f.writefln("   cfl:  %.18e", SimState.cfl_max);
+    }
+    double wall_clock_elapsed = to!double((Clock.currTime() - SimState.wall_clock_start).total!"msecs"())/1000.0;
+    f.writefln("   wall-clock-elapsed: %.3f", wall_clock_elapsed);
     f.close();
+}
 
-
+/**
+ * Prepare times file on restart.
+ *
+ * When we restart, we want to keep all times file entries up
+ * to and including restart index. For those beyond,
+ * we want to remove.
+ *
+ * Authors: RJG
+ * Date: 2024-03-10
+ */
+void prepareTimesFileOnRestart(int restartIdx)
+{
+    Node timesData = dyaml.Loader.fromFile(lmrCfg.timesFile).load();
+    string snap;
+    Node snapData;
+    auto f = File(lmrCfg.timesFile, "w");
+    foreach (i; 0 .. restartIdx+1) {
+        snap = format(lmrCfg.snapshotIdxFmt, i);
+        snapData = timesData[snap];
+        f.writefln("'%s':", snap);
+        f.writefln("   step: %d", snapData["step"].as!int);
+        f.writefln("   time: %.18e", snapData["time"].as!double);
+        f.writefln("   dt:   %.18e", snapData["dt"].as!double);
+        f.writefln("   cfl:  %.18e", snapData["cfl"].as!double);
+        f.writefln("   wall-clock-elapsed: %.3f", snapData["wall-clock-elapsed"].as!double);
+    }
+    f.close();
+    SimState.step = snapData["step"].as!int;
+    SimState.time = snapData["time"].as!double;
+    SimState.dt_global = snapData["dt"].as!double;
 }
 
 /**
@@ -800,18 +895,12 @@ void finalizeSimulation_timemarching()
             }
         }
     }
-
-    if (!SimState.loads_just_written) {
-        if (GlobalConfig.is_master_task) {
-            init_current_loads_tindx_dir(SimState.current_loads_tindx);
-        }
-        version(mpi_parallel) { MPI_Barrier(MPI_COMM_WORLD); }
-        wait_for_current_tindx_dir(SimState.current_loads_tindx);
-        write_boundary_loads_to_file(SimState.time, SimState.current_loads_tindx);
-        if (GlobalConfig.is_master_task) {
-            update_loads_times_file(SimState.time, SimState.current_loads_tindx);
-        }
+    */
+    
+    if (GlobalConfig.write_loads && !SimState.loads_just_written) {
+        writeLoadsFiles_timemarching();
     }
+    /*
     if (!GlobalConfig.new_flow_format && GlobalConfig.do_temporal_DFT) {
         write_DFT_files();
     }

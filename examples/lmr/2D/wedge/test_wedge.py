@@ -16,10 +16,12 @@ def change_test_dir(request, monkeypatch):
 expected_reason_for_stop = "relative-global-residual-target"
 expected_number_steps = 43
 expected_final_cfl = 1.493e+04
+tolerance_on_cfl_check = 0.01
 expected_number_steps_on_restart = 43
 expected_final_cfl_on_restart = 1.502e+04
+expected_restart_step = 36
 
-def expected_output(proc, expected_n_steps, expected_final_cfl):
+def expected_output(proc, expected_n_steps, expected_final_cfl, check_start_step=False):
     steps = 0
     cfl = 0.0
     lines = proc.stdout.split("\n")
@@ -30,11 +32,14 @@ def expected_output(proc, expected_n_steps, expected_final_cfl):
             steps = int(line.split()[1])
         if line.find("FINAL-CFL") != -1:
             cfl = float(line.split()[1])
+        if line.find("RESTART-STEP") != -1:
+            restart_step = float(line.split()[1])
     assert reason == expected_reason_for_stop, "Failed to stop for the expected reason."
     assert steps == expected_n_steps, "Failed to take correct number of steps."
-    assert abs(cfl - expected_final_cfl)/expected_final_cfl < 0.005, \
+    assert abs(cfl - expected_final_cfl)/expected_final_cfl < tolerance_on_cfl_check, \
         "Failed to arrive at expected CFL value on final step."
-
+    if (check_start_step):
+        assert  restart_step == expected_restart_step, "Failed to restart at the expected step."
 
 def test_prep():
     make_targets = ['gas', 'grid', 'init']
@@ -45,7 +50,7 @@ def test_prep():
 
 
 def test_run():
-    cmd = "lmr run-steady"
+    cmd = "lmr run"
     proc = subprocess.run(cmd.split(), capture_output=True, text=True)
     assert proc.returncode == 0, "Failed during: " + cmd
     expected_output(proc, expected_number_steps, expected_final_cfl)
@@ -58,10 +63,10 @@ def test_snapshot():
 
 
 def test_restart():
-    cmd = "lmr run-steady -s 1"
+    cmd = "lmr run -s 1"
     proc = subprocess.run(cmd.split(), capture_output=True, text=True)
     assert proc.returncode == 0, "Failed during: " + cmd
-    expected_output(proc, expected_number_steps_on_restart, expected_final_cfl_on_restart)
+    expected_output(proc, expected_number_steps_on_restart, expected_final_cfl_on_restart, True)
 
 def test_cleanup():
     cmd = "make clean"

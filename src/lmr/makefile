@@ -8,6 +8,11 @@
 DMD ?= ldc2
 NVCC ?= nvcc
 GPP ?= g++
+# default is NOT to opt out of MPI build
+OPT_OUT_MPI ?= 0
+MPI_IMPLEMENTATION := OpenMPI
+# default is NOT to use MPICH
+WITH_MPICH ?= 0
 
 # FLAVOUR options are debug, fast, profile
 # Flags for each compiler will be determined on this option.
@@ -25,18 +30,9 @@ else
 endif
 $(info PLATFORM=$(PLATFORM))
 
-# PARALLEL_FLAVOUR options are: shared, openmpi, mpich
-PARALLEL_FLAVOUR ?= shared
-
-WITH_MPI ?= 0
-WITH_NK ?= 0
-WITH_PIR ?= 0
-WITH_SSC ?= 0
 WITH_OPENCL_GPU_CHEM ?= 0
 WITH_CUDA_GPU_CHEM ?= 0
 DEBUG_CHEM ?= 0
-WITH_COMPLEX_NUMBERS ?= 0
-WITH_FPE ?= 0
 WITH_DVODE ?= 0
 WITH_DIAGNOSTICS ?= 0
 MULTI_SPECIES_GAS ?= 1
@@ -44,6 +40,7 @@ MULTI_T_GAS ?= 1
 MHD ?= 1
 TURBULENCE ?= 1
 WITH_E4DEBUG ?= 0
+WITH_CHECK_JAC ?=0
 
 # For the ldc2 compiler, we can turn on some extra checking at run-time.
 # There will be a computational cost associated with these checks.
@@ -53,25 +50,35 @@ WITH_ADDRESS_SANITIZER ?= 0
 OPENMPI_DIR := ../extern/OpenMPI
 OPENMPI_FILES := $(OPENMPI_DIR)/source/mpi/package.d
 
+MPI_DIR = $(OPENMPI_DIR)
+MPI_FILES = $(OPENMPI_FILES)
+
 MPICH_DIR := ../extern/cray-mpich
 MPICH_FILES := $(MPICH_DIR)/mpi.d
 
 PROGRAMS := lmr gdtk-module
 SUB_PROGRAMS := lmr-run lmrZ-run
+ifeq ($(OPT_OUT_MPI), 0)
+	SUB_PROGRAMS += lmr-mpi-run lmrZ-mpi-run
+endif
+ifeq ($(WITH_MPICH),1)
+    MPI_LIBRARY_DIRS = $(shell mpicc -link_info | cut -d' ' -f 3)
+    MPI_LIB_DIRS_SEARCH = $(foreach d, $(MPI_LIBRARY_DIRS), -L$d)
+    MPI_DIR = $(MPICH_DIR)
+    MPI_FILES = $(MPICH_FILES)
+	MPI_IMPLEMENTATION := MPICH
+endif
+ifeq ($(WITH_CHECK_JAC), 1)
+	SUB_PROGRAMS += lmr-check-jacobian lmrZ-check-jacobian
+endif
 SHARE_FILES :=
 ETC_FILES := lmr.cfg
 PY_PROG_DIR := python-programs
 PY_PROGRAMS := lmr-verify
 AUX_PROGRAMS := prep-gas ugrid_partition prep-chem chemkin2eilmer prep-kinetics
 
-ifeq ($(WITH_MPI),1)
-    PARALLEL_FLAVOUR = openmpi
-    SUB_PROGRAMS += lmr-mpi-run-steady
-    MPI_LIBRARY_DIRS = $(shell mpicc --showme:libdirs)
-    MPI_LIB_DIRS_SEARCH = $(foreach d, $(MPI_LIBRARY_DIRS), -L-L$d)
-    MPI_DIR = $(OPENMPI_DIR)
-    MPI_FILES = $(OPENMPI_FILES)
-endif
+MPI_LIBRARY_DIRS = $(shell mpicc --showme:libdirs)
+MPI_LIB_DIRS_SEARCH = $(foreach d, $(MPI_LIBRARY_DIRS), -L-L$d)
 
 include lmr-files.mk
 
@@ -160,9 +167,10 @@ ifeq ($(DMD), dmd)
         DFLAGS := $(DFLAGS) $(DVERSION)$(LIBPLOT_VERSION_STR)
         DLINKFLAGS := $(DLINKFLAGS) -L-lplot
     endif
-    DLINKFLAGS := $(DLINKFLAGS) -L-ldl
+	# For note on "-Wl,-E", see: https://web.tecgraf.puc-rio.br/~lhf/ftp/lua/install.html#adding
+	DLINKFLAGS := $(DLINKFLAGS) -L-Wl,-E -L-ldl
     ifeq ($(PLATFORM), macosx)
-	DLINKFLAGS += -L-ld_classic
+        DLINKFLAGS += -L-ld_classic -L-no_compact_unwind
     endif
 endif
 ifeq ($(DMD), ldc2)
@@ -171,7 +179,11 @@ ifeq ($(DMD), ldc2)
     # llvm-profdata show -text -topn=10 <profraw-file>
     DEBUG_DFLAGS := -w -g --d-debug --d-version=flavour_debug
     PROFILE_DFLAGS := -fprofile-generate -g -w -O2 -release -enable-inlining -boundscheck=off --d-version=flavour_profile
-    FAST_DFLAGS := -w -g -O2 -release -enable-inlining -boundscheck=off --d-version=flavour_fast -flto=full
+    FAST_DFLAGS := -w -g -O2 -release -enable-inlining -boundscheck=off --d-version=flavour_fast
+    ifeq ($(PLATFORM), linux)
+	# Full link-time optimization does not play nicely on macOS
+	FAST_DFLAGS += -flto=full
+    endif
     ifeq ($(WITH_THREAD_SANITIZER), 1)
         DFLAGS := $(DFLAGS) -fsanitize=thread
     endif
@@ -194,9 +206,13 @@ ifeq ($(DMD), ldc2)
         DFLAGS := $(DFLAGS) $(DVERSION)$(LIBPLOT_VERSION_STR)
         DLINKFLAGS := $(DLINKFLAGS) -L-lplot
     endif
-    DLINKFLAGS := $(DLINKFLAGS) -L-ldl
+	DLINKFLAGS := $(DLINKFLAGS) -L-ldl
+	ifeq ($(PLATFORM), linux)
+		# For note on "-Wl,-E", see: https://web.tecgraf.puc-rio.br/~lhf/ftp/lua/install.html#adding
+		DLINKFLAGS += -L-Wl,-E
+	endif
     ifeq ($(PLATFORM), macosx)
-	DLINKFLAGS += -L-ld_classic
+		DLINKFLAGS += -L-ld_classic -L-no_compact_unwind
     endif
 endif
 
@@ -209,6 +225,12 @@ ifeq ($(FLAVOUR), profile)
 endif
 ifeq ($(FLAVOUR), fast)
     FLAVOUR_FLAGS := $(FAST_DFLAGS)
+    WITH_FPE ?= 0
+endif
+
+# Add platform version if necessary
+ifeq ($(PLATFORM), macosx)
+	DFLAGS += $(DVERSION)macosx
 endif
 
 # DIP1008 allows throwing of exceptions in @nogc code. Appeared in 2.079.0, 2018-03-01.
@@ -245,7 +267,7 @@ ifeq ($(TURBULENCE),1)
     DFLAGS += $(DVERSION)turbulence
 endif
 
-default: lmr lmr-run lmrZ-run gdtk-module
+default: $(PROGRAMS) $(SUB_PROGRAMS)
 
 install: $(PROGRAMS) $(SUB_PROGRAMS) $(PY_PROGRAMS) $(AUX_PROGRAMS)
 	- mkdir -p $(INSTALL_DIR)/bin
@@ -265,13 +287,13 @@ install: $(PROGRAMS) $(SUB_PROGRAMS) $(PY_PROGRAMS) $(AUX_PROGRAMS)
 	cp -r $(BUILD_DIR)/* $(INSTALL_DIR)
 
 clean:
+	- rm *.o
+	- rm -rf $(BUILD_DIR)/*
 	- rm $(PROGRAMS)
 	- rm $(SUB_PROGRAMS)
 	- rm $(PY_PROGRAMS)
-	- rm lmr-mpi-run-steady
-	- rm *.o
 	- rm lmrconfig_with_str_subst.d
-	- rm runsim_shared.d runsim_openmpi.d
+	- rm runsim_shared.d runsim_mpi.d
 	- rm -f gdtk-module
 	- cd $(OPENMPI_DIR); make clean
 	- cd $(MPICH_DIR); make clean
@@ -312,7 +334,7 @@ lmr: main.d lmrconfig_with_str_subst.d $(LMR_CORE_FILES) $(LMR_CMD_FILES) $(LMR_
 		$(DVERSION)newton_krylov \
 		main.d \
 		lmrconfig_with_str_subst.d \
-		$(EILMER4_FILES) $(LMR_CORE_FILES) $(LMR_CMD_FILES) $(LMR_LUA_FILES) \
+		$(LMR_CORE_FILES) $(LMR_CMD_FILES) $(LMR_LUA_FILES) \
 		$(LMR_BC_FILES) $(LMR_SOLID_FILES) $(LMR_EFIELD_FILES) \
 		$(GEOM_FILES) $(GRID_FILES) \
 		$(GAS_FILES) $(CEQ_SRC_FILES) $(GZIP_FILES) \
@@ -331,13 +353,14 @@ lmr-run: lmrconfig_with_str_subst.d $(LMR_CORE_FILES) $(LMR_CMD_FILES) $(LMR_LUA
 	$(NM_FILES) $(NTYPES_FILES) $(UTIL_FILES) \
 	$(GASDYN_FILES) $(GASDYN_LUA_FILES) $(NM_LUA_FILES) \
 	$(DYAML_FILES) $(TINYENDIAN_FILES)
-	sed -e 's/PUT_PARALLEL_FLAVOUR_HERE/shared/' $(LMR_CMD)/runsim.d > runsim_shared.d
-	sed -e 's/PUT_NUMBER_TYPE_HERE/real/' $(LMR_CMD)/runsim.d > runsim_shared.d
+	sed -e 's/PUT_PARALLEL_FLAVOUR_HERE/shared/' \
+	    -e 's/PUT_NUMBER_TYPE_HERE/real/' \
+	$(LMR_CMD)/runsim.d > runsim_shared.d
 	$(DMD) $(FLAVOUR_FLAGS) $(DFLAGS) $(OF)$@ $(DVERSION)run_main \
 		$(DVERSION)newton_krylov \
 		runsim_shared.d \
 		lmrconfig_with_str_subst.d \
-		$(EILMER4_FILES) $(LMR_CORE_FILES) $(LMR_LUA_FILES) $(LMR_CMD)/command.d $(LMR_CMD)/cmdhelper.d \
+		$(LMR_CORE_FILES) $(LMR_LUA_FILES) $(LMR_CMD)/command.d $(LMR_CMD)/cmdhelper.d \
 		$(LMR_BC_FILES) $(LMR_SOLID_FILES) $(LMR_EFIELD_FILES) \
 		$(GEOM_FILES) $(GRID_FILES) \
 		-i=$(GAS_PACKAGE) -I=$(GAS_DIR) $(CEQ_SRC_FILES) $(GZIP_FILES) \
@@ -356,14 +379,15 @@ lmrZ-run: lmrconfig_with_str_subst.d $(LMR_CORE_FILES) $(LMR_CMD_FILES) $(LMR_LU
 	$(NM_FILES) $(NTYPES_FILES) $(UTIL_FILES) \
 	$(GASDYN_FILES) $(GASDYN_LUA_FILES) $(NM_LUA_FILES) \
 	$(DYAML_FILES) $(TINYENDIAN_FILES)
-	sed -e 's/PUT_PARALLEL_FLAVOUR_HERE/shared/' $(LMR_CMD)/runsim.d > runsim_shared.d
-	sed -e 's/PUT_NUMBER_TYPE_HERE/complex/' $(LMR_CMD)/runsim.d > runsim_shared.d
+	sed -e 's/PUT_PARALLEL_FLAVOUR_HERE/shared/' \
+	    -e 's/PUT_NUMBER_TYPE_HERE/complex/' \
+	$(LMR_CMD)/runsim.d > runsim_shared.d
 	$(DMD) $(FLAVOUR_FLAGS) $(DFLAGS) $(OF)$@ $(DVERSION)run_main \
 		$(DVERSION)newton_krylov \
 		$(DVERSION)complex_numbers \
 		runsim_shared.d \
 		lmrconfig_with_str_subst.d \
-		$(EILMER4_FILES) $(LMR_CORE_FILES) $(LMR_LUA_FILES) $(LMR_CMD)/command.d $(LMR_CMD)/cmdhelper.d \
+		$(LMR_CORE_FILES) $(LMR_LUA_FILES) $(LMR_CMD)/command.d $(LMR_CMD)/cmdhelper.d \
 		$(LMR_BC_FILES) $(LMR_SOLID_FILES) $(LMR_EFIELD_FILES) \
 		$(GEOM_FILES) $(GRID_FILES) \
 		-i=$(GAS_PACKAGE) -I=$(GAS_DIR) $(CEQ_SRC_FILES) $(GZIP_FILES) \
@@ -383,14 +407,16 @@ lmr-mpi-run: lmrconfig_with_str_subst.d $(LMR_CORE_FILES) $(LMR_CMD_FILES) $(LMR
 	$(GASDYN_FILES) $(GASDYN_LUA_FILES) $(NM_LUA_FILES) \
 	$(DYAML_FILES) $(TINYENDIAN_FILES)
 	cd $(MPI_DIR); make
-	sed -e 's/PUT_PARALLEL_FLAVOUR_HERE/openmpi/' $(LMR_CMD)/runsim.d > runsim_openmpi.d
+	sed -e 's/PUT_PARALLEL_FLAVOUR_HERE/$(MPI_IMPLEMENTATION)/' \
+	    -e 's/PUT_NUMBER_TYPE_HERE/real/' \
+	$(LMR_CMD)/runsim.d > runsim_mpi.d
 	$(DMD) $(FLAVOUR_FLAGS) $(DFLAGS) $(OF)$@ $(DVERSION)run_main \
 		$(DVERSION)mpi_parallel \
 		$(MPI_LIB_DIRS_SEARCH) \
 		$(DVERSION)newton_krylov \
-		runsim_openmpi.d \
+		runsim_mpi.d \
 		lmrconfig_with_str_subst.d \
-		$(EILMER4_FILES) $(LMR_CORE_FILES) $(LMR_LUA_FILES) $(LMR_CMD)/command.d $(LMR_CMD)/cmdhelper.d \
+		$(LMR_CORE_FILES) $(LMR_LUA_FILES) $(LMR_CMD)/command.d $(LMR_CMD)/cmdhelper.d \
 		$(LMR_BC_FILES) $(LMR_SOLID_FILES) $(LMR_EFIELD_FILES) \
 		$(GEOM_FILES) $(GRID_FILES) \
 		$(GAS_FILES) $(CEQ_SRC_FILES) $(GZIP_FILES) \
@@ -410,15 +436,17 @@ lmrZ-mpi-run: lmrconfig_with_str_subst.d $(LMR_CORE_FILES) $(LMR_CMD_FILES) $(LM
 	$(GASDYN_FILES) $(GASDYN_LUA_FILES) $(NM_LUA_FILES) \
 	$(DYAML_FILES) $(TINYENDIAN_FILES)
 	cd $(MPI_DIR); make
-	sed -e 's/PUT_PARALLEL_FLAVOUR_HERE/openmpi/' $(LMR_CMD)/runsim.d > runsim_openmpi.d
+	sed -e 's/PUT_PARALLEL_FLAVOUR_HERE/$(MPI_IMPLEMENTATION)/' \
+	    -e 's/PUT_NUMBER_TYPE_HERE/complex/' \
+	$(LMR_CMD)/runsim.d > runsim_mpi.d
 	$(DMD) $(FLAVOUR_FLAGS) $(DFLAGS) $(OF)$@ $(DVERSION)run_main \
 		$(DVERSION)mpi_parallel \
 		$(MPI_LIB_DIRS_SEARCH) \
 		$(DVERSION)newton_krylov \
 		$(DVERSION)complex_numbers \
-		runsim_openmpi.d \
+		runsim_mpi.d \
 		lmrconfig_with_str_subst.d \
-		$(EILMER4_FILES) $(LMR_CORE_FILES) $(LMR_LUA_FILES) $(LMR_CMD)/command.d $(LMR_CMD)/cmdhelper.d \
+		$(LMR_CORE_FILES) $(LMR_LUA_FILES) $(LMR_CMD)/command.d $(LMR_CMD)/cmdhelper.d \
 		$(LMR_BC_FILES) $(LMR_SOLID_FILES) $(LMR_EFIELD_FILES) \
 		$(GEOM_FILES) $(GRID_FILES) \
 		$(GAS_FILES) $(CEQ_SRC_FILES) $(GZIP_FILES) \
@@ -429,6 +457,52 @@ lmrZ-mpi-run: lmrconfig_with_str_subst.d $(LMR_CORE_FILES) $(LMR_CMD_FILES) $(LM
 		$(DYAML_FILES) $(TINYENDIAN_FILES) \
 		$(DLINKFLAGS) -L-lmpi
 
+lmr-check-jacobian: lmrconfig_with_str_subst.d $(LMR_CORE_FILES) $(LMR_CMD_FILES) $(LMR_LUA_FILES) \
+	$(LMR_BC_FILES) $(LMR_SOLID_FILES) $(LMR_EFIELD_FILES) \
+	$(GEOM_FILES) $(GRID_FILES) \
+	$(GAS_FILES) $(CEQ_SRC_FILES) $(LIBCEQ) $(LIBGASF) $(LIBLUA) $(GZIP_FILES) \
+	$(KINETICS_FILES) $(GAS_LUA_FILES) $(KINETICS_LUA_FILES) \
+	$(NM_FILES) $(NTYPES_FILES) $(UTIL_FILES) \
+	$(GASDYN_FILES) $(GASDYN_LUA_FILES) $(NM_LUA_FILES) \
+	$(DYAML_FILES) $(TINYENDIAN_FILES)
+	$(DMD) $(FLAVOUR_FLAGS) $(DFLAGS) $(OF)$@ \
+		$(DVERSION)newton_krylov \
+		$(LMR_CMD)/checkjacobian.d \
+		lmrconfig_with_str_subst.d \
+		$(LMR_CORE_FILES) $(LMR_CMD_FILES) $(LMR_LUA_FILES) \
+		$(LMR_BC_FILES) $(LMR_SOLID_FILES) $(LMR_EFIELD_FILES) \
+		$(GEOM_FILES) $(GRID_FILES) \
+		$(GAS_FILES) $(CEQ_SRC_FILES) $(GZIP_FILES) \
+		$(UTIL_FILES) $(NM_FILES) $(NTYPES_FILES) \
+		$(KINETICS_FILES) $(GAS_LUA_FILES) $(KINETICS_LUA_FILES) \
+		$(GASDYN_FILES) $(GASDYN_LUA_FILES) $(NM_LUA_FILES) \
+		$(LIBCEQ) $(LIBGASF) $(LIBLUA) \
+		$(DYAML_FILES) $(TINYENDIAN_FILES) \
+		$(DLINKFLAGS)
+
+lmrZ-check-jacobian: lmrconfig_with_str_subst.d $(LMR_CORE_FILES) $(LMR_CMD_FILES) $(LMR_LUA_FILES) \
+	$(LMR_BC_FILES) $(LMR_SOLID_FILES) $(LMR_EFIELD_FILES) \
+	$(GEOM_FILES) $(GRID_FILES) \
+	$(GAS_FILES) $(CEQ_SRC_FILES) $(LIBCEQ) $(LIBGASF) $(LIBLUA) $(GZIP_FILES) \
+	$(KINETICS_FILES) $(GAS_LUA_FILES) $(KINETICS_LUA_FILES) \
+	$(NM_FILES) $(NTYPES_FILES) $(UTIL_FILES) \
+	$(GASDYN_FILES) $(GASDYN_LUA_FILES) $(NM_LUA_FILES) \
+	$(DYAML_FILES) $(TINYENDIAN_FILES)
+	$(DMD) $(FLAVOUR_FLAGS) $(DFLAGS) $(OF)$@ \
+		$(DVERSION)newton_krylov \
+		$(DVERSION)complex_numbers \
+		$(LMR_CMD)/checkjacobian.d \
+		lmrconfig_with_str_subst.d \
+		$(LMR_CORE_FILES) $(LMR_CMD_FILES) $(LMR_LUA_FILES) \
+		$(LMR_BC_FILES) $(LMR_SOLID_FILES) $(LMR_EFIELD_FILES) \
+		$(GEOM_FILES) $(GRID_FILES) \
+		$(GAS_FILES) $(CEQ_SRC_FILES) $(GZIP_FILES) \
+		$(UTIL_FILES) $(NM_FILES) $(NTYPES_FILES) \
+		$(KINETICS_FILES) $(GAS_LUA_FILES) $(KINETICS_LUA_FILES) \
+		$(GASDYN_FILES) $(GASDYN_LUA_FILES) $(NM_LUA_FILES) \
+		$(LIBCEQ) $(LIBGASF) $(LIBLUA) \
+		$(DYAML_FILES) $(TINYENDIAN_FILES) \
+		$(DLINKFLAGS)
 
 #### Python programs
 lmr-verify: $(PY_PROG_DIR)/lmr_verify.py
@@ -440,7 +514,9 @@ prep-gas:
 	cd $(GAS_DIR); make BUILD_DIR=$(BUILD_DIR) DMD=$(DMD) PLATFORM=$(PLATFORM) build-prep-gas
 
 ugrid_partition:
+	- mkdir -p $(BUILD_DIR)/bin
 	cd $(GRID_DIR); make BUILD_DIR=$(BUILD_DIR) DMD=$(DMD) PLATFORM=$(PLATFORM) ugrid_partition
+	cd $(GRID_DIR); cp ugrid_partition $(BUILD_DIR)/bin
 
 prep-chem:
 	cd $(KINETICS_DIR); make BUILD_DIR=$(BUILD_DIR) PLATFORM=$(PLATFORM) build-prep-chem

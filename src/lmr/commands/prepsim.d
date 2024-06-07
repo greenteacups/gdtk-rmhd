@@ -15,7 +15,7 @@ import std.stdio : writeln, writefln;
 import std.string : toStringz, strip, split, format;
 import std.conv : to;
 import std.path : dirName;
-import std.file : thisExePath, exists;
+import std.file : thisExePath, exists, rmdirRecurse;
 import std.json : JSONValue;
 import std.algorithm : sort, uniq;
 
@@ -35,9 +35,9 @@ import luaflowsolution;
 import luaflowstate;
 import luaidealgasflow;
 import luagasflow;
-import blockio : luafn_writeFlowMetadata, luafn_writeInitialFlowFile;
 
 Command prepSimCmd;
+string cmdName = "prep-sim";
 
 static this()
 {
@@ -55,38 +55,35 @@ options ([+] can be repeated):
      Increase verbosity during preparation of the simulation files.
 
  -j, --job=flow.lua
-     Specify the input file to be different from job.luu (default).
+     Specify the input file to be something other than job.lua.
      default: job.lua
 `;
 
 }
 
-void main_(string[] args)
+int main_(string[] args)
 {
     string blocksForPrep = "";
     int verbosity = 0;
     string userFlowName = lmrCfg.jobFile;
-    getopt(args,
-           config.bundling,
-           "v|verbose+", &verbosity,
-           "j|job", &userFlowName,
-           );
+    try {
+        getopt(args,
+               config.bundling,
+               "v|verbose+", &verbosity,
+               "j|job", &userFlowName,
+               );
+    } catch (Exception e) {
+        writefln("Eilmer %s program quitting.", cmdName);
+        writeln("There is something wrong with the command-line arguments/options.");
+        writeln(e.msg);
+        return 1;
+    }
 
     if (verbosity > 1) { writeln("lmr prep-sim: Start lua connection."); }
 
     auto L = initLuaStateForPrep();
     lua_pushinteger(L, verbosity);
     lua_setglobal(L, "verbosity");
-    // RJG, 2023-06-27
-    // Add a few more lua-wrapped functions for use in prep.
-    // These functions are not backported into Eilmer 4, and
-    // I don't want to hijack initLuaStateForPrep() just yet.
-    // At some point in the future, this can be handled inside
-    // initLuaStateForPrep().
-    lua_pushcfunction(L, &luafn_writeFlowMetadata);
-    lua_setglobal(L, "writeFlowMetadata");
-    lua_pushcfunction(L, &luafn_writeInitialFlowFile);
-    lua_setglobal(L, "writeInitialFlowFile");
 
     // Determine which fluidBlocks we need to process.
     int[] blockIdList;
@@ -144,7 +141,7 @@ void main_(string[] args)
     if (!exists(userFlowName)) {
         writefln("The file %s does not seems to exist.", userFlowName);
         writeln("Did you mean to specify a different job name?");
-        return;
+        return 1;
     }
     if (luaL_dofile(L, toStringz(userFlowName)) != 0) {
         writeln("There was a problem in the user-supplied input lua script: ", userFlowName);
@@ -161,14 +158,19 @@ void main_(string[] args)
     set_config_for_core(jsonData);
     // We may not proceed to building of block files if the config parameters are incompatible.
     checkGlobalConfig();
-    if (luaL_dostring(L, toStringz("buildFlowAndGridFiles()")) != 0) {
-        writeln("There was a problem in the Eilmer build function buildFlowAndGridFiles() in prepsim.lua");
+
+    // Clean out anything in snapshots area if present from earlier run
+    if (lmrCfg.snapshotDir.exists) {
+        if (verbosity > 1) { writeln("lmr prep-sim: Removing old snapshots."); }
+        lmrCfg.snapshotDir.rmdirRecurse;
+    }
+    // and now we're ready to build new stuff!
+    if (luaL_dostring(L, toStringz("buildGridAndFieldFiles()")) != 0) {
+        writeln("There was a problem in the Eilmer build function buildGridAndFieldFiles() in prepsim.lua");
         string errMsg = to!string(lua_tostring(L, -1));
         throw new FlowSolverException(errMsg);
     }
     if (verbosity > 0) { writeln("lmr prep-sim: Done."); }
 
-    return;
+    return 0;
 }
-
-

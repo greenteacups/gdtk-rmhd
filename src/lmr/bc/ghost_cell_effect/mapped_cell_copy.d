@@ -22,7 +22,7 @@ import globalconfig;
 import globaldata;
 import flowstate;
 import fvinterface;
-import fvcell;
+import lmr.fluidfvcell;
 import fluidblock;
 import sfluidblock;
 import gas;
@@ -43,14 +43,14 @@ struct BlockAndCellId {
 class GhostCellMappedCellCopy : GhostCellEffect {
 public:
     // Flow data along the boundary is stored in ghost cells.
-    FVCell[] ghost_cells;
+    FluidFVCell[] ghost_cells;
     size_t[string] ghost_cell_index_from_faceTag;
     // For each ghost-cell associated with the current boundary,
     // we will have a corresponding "mapped cell", also known as "source cell"
     // from which we will copy the :flow conditions.
     // In the shared-memory flavour of the code, it is easy to get a direct
     // reference to each such mapped cell and store that for easy access.
-    FVCell[] mapped_cells;
+    FluidFVCell[] mapped_cells;
     // We may specify which source cell and block from which a particular ghost-cell
     // (a.k.a. destination cell) will copy its flow and geometry data.
     // This mapping information is prepared externally and provided in
@@ -315,7 +315,7 @@ public:
                     auto tokens = lineContent.split();
                     string faceTag = tokens[0];
                     size_t src_cell_id = to!size_t(tokens[1]);
-                    mapped_cells_list[src_blk_id][faceTag] = BlockAndCellId(src_blk_id, src_cell_id);
+                    mapped_cells_list[src_blk_id][faceTag] = BlockAndCellId(blkId, src_cell_id);
                     version (mpi_parallel) {
                         src_cell_ids[blkId][src_blk_id] ~= src_cell_id;
                         ghost_cell_indices[blkId][src_blk_id] ~= i;
@@ -331,7 +331,7 @@ public:
                     auto tokens = lineContent.split();
                     string faceTag = tokens[0];
                     size_t src_cell_id = to!size_t(tokens[1]);
-                    mapped_cells_list[blkId][faceTag] = BlockAndCellId(blkId, src_cell_id);
+                    mapped_cells_list[blkId][faceTag] = BlockAndCellId(src_blk_id, src_cell_id);
                     version (mpi_parallel) {
                         src_cell_ids[src_blk_id][blkId] ~= src_cell_id;
                         ghost_cell_indices[src_blk_id][blkId] ~= i;
@@ -432,9 +432,9 @@ public:
                         auto src_blk_id = mapped_cells_list[blk.id][faceTag].blkId;
                         auto src_cell_id = mapped_cells_list[blk.id][faceTag].cellId;
                         if (!find(GlobalConfig.localFluidBlockIds, src_blk_id).empty) {
-                            auto blk = cast(FluidBlock) globalBlocks[src_blk_id];
-                            assert(blk !is null, "Oops, this should be a FluidBlock object.");
-                            mapped_cells ~= blk.cells[src_cell_id];
+                            auto srcBlk = cast(FluidBlock) globalBlocks[src_blk_id];
+                            assert(srcBlk !is null, "Oops, this should be a FluidBlock object.");
+                            mapped_cells ~= srcBlk.cells[src_cell_id];
                         } else {
                             auto msg = format("block id %d is not in localFluidBlocks", src_blk_id);
                             throw new FlowSolverException(msg);
@@ -578,7 +578,7 @@ public:
             }
             if (!found) {
                 // Fall back to nearest cell search.
-                FVCell closest_cell = localFluidBlocks[0].cells[0];
+                FluidFVCell closest_cell = localFluidBlocks[0].cells[0];
                 Vector3 cellpos = closest_cell.pos[0];
                 double min_distance = distance_between(cellpos, mypos);
                 foreach (blk; localFluidBlocks) {
@@ -599,7 +599,7 @@ public:
     } // end set_up_cell_mapping_via_search()
 
     @nogc
-    ref FVCell get_mapped_cell(size_t i)
+    ref FluidFVCell get_mapped_cell(size_t i)
     {
         if (i < mapped_cells.length) {
             return mapped_cells[i];
@@ -644,7 +644,6 @@ public:
                 auto buf = outgoing_geometry_buf_list[i];
                 size_t ii = 0;
                 foreach (cid; src_cell_ids[blk.id][outgoing_block_list[i]]) {
-                    writefln("blkId= %d, i= %d outBlk= %d cid= %d", blk.id, i, outgoing_block_list[i], cid);
                     auto c = blk.cells[cid];
                     foreach (j; 0 .. blk.myConfig.n_grid_time_levels) {
                         buf[ii++] = c.pos[j].x.re; version(complex_numbers) { buf[ii++] = c.pos[j].x.im; }
@@ -707,12 +706,14 @@ public:
 
                     c.L_min.re = buf[ii++]; version(complex_numbers) { c.L_min.im = buf[ii++]; }
                     c.L_max.re = buf[ii++]; version(complex_numbers) { c.L_max.im = buf[ii++]; }
+                    c.update_celldata_geometry();
                 }
             }
         } else { // not mpi_parallel
             // For a single process, just access the data directly.
             foreach (i, mygc; ghost_cells) {
                 mygc.copy_values_from(mapped_cells[i], CopyDataOption.grid);
+                mygc.update_celldata_geometry();
             }
         }
     } // end exchange_geometry_phase2()
@@ -796,7 +797,7 @@ public:
                 size_t ii = 0;
                 foreach (cid; src_cell_ids[blk.id][outgoing_block_list[i]]) {
                     auto c = blk.cells[cid];
-                    FlowState* fs = &(c.fs);
+                    FlowState* fs = c.fs;
                     GasState* gs = &(fs.gas);
                     buf[ii++] = gs.rho.re; version(complex_numbers) { buf[ii++] = gs.rho.im; }
                     buf[ii++] = gs.p.re; version(complex_numbers) { buf[ii++] = gs.p.im; }
@@ -873,7 +874,7 @@ public:
                 size_t ii = 0;
                 foreach (gi; ghost_cell_indices[incoming_block_list[i]][blk.id]) {
                     auto c = ghost_cells[gi];
-                    FlowState* fs = &(c.fs);
+                    FlowState* fs = c.fs;
                     GasState* gs = &(fs.gas);
                     gs.rho.re = buf[ii++]; version(complex_numbers) { gs.rho.im = buf[ii++]; }
                     gs.p.re = buf[ii++]; version(complex_numbers) { gs.p.im = buf[ii++]; }
@@ -955,7 +956,7 @@ public:
                 size_t ii = 0;
                 foreach (cid; src_cell_ids[blk.id][outgoing_block_list[i]]) {
                     auto c = blk.cells[cid];
-                    FlowState* fs = &(c.fs);
+                    FlowState* fs = c.fs;
                     buf[ii++] = fs.mu_t.re; version(complex_numbers) { buf[ii++] = fs.mu_t.im; }
                     buf[ii++] = fs.k_t.re; version(complex_numbers) { buf[ii++] = fs.k_t.im; }
                 }
@@ -992,7 +993,7 @@ public:
                 size_t ii = 0;
                 foreach (gi; ghost_cell_indices[incoming_block_list[i]][blk.id]) {
                     auto c = ghost_cells[gi];
-                    FlowState* fs = &(c.fs);
+                    FlowState* fs = c.fs;
                     fs.mu_t.re = buf[ii++]; version(complex_numbers) { fs.mu_t.im = buf[ii++]; }
                     fs.k_t.re = buf[ii++]; version(complex_numbers) { fs.k_t.im = buf[ii++]; }
                 }

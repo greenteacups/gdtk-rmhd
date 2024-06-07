@@ -60,7 +60,6 @@ import solid_udf_source_terms;
 import grid_motion;
 import grid_motion_udf;
 import mass_diffusion;
-import loads;
 import turbulence;
 version(FSI) { import fsi; }
 
@@ -830,7 +829,7 @@ final class GlobalConfig {
     shared static int[] localSolidBlockIds; // We will search this array to see if the solid block is local.
     //
     shared static string grid_format = "gziptext"; // alternative is "rawbinary"
-    shared static string flow_format = "gziptext";
+    shared static string field_format = "gziptext";
     // Depending on the format of the contained data, grid and solution files will have
     // a particular file extension.
     shared static string gridFileExt = "gz";
@@ -898,7 +897,6 @@ final class GlobalConfig {
     shared static SolidDomainCoupling coupling_with_solid_domains = SolidDomainCoupling.tight;
     shared static SolidDomainLooseUpdateOptions sdluOptions;
     shared static bool solid_has_isotropic_properties = true;
-    shared static bool solid_has_homogeneous_properties = true;
     shared static bool solid_domain_augmented_deriv_avg = true;
     shared static bool fluid_solid_bc_use_heat_transfer_coeff = false;
     shared static double solid_domain_cfl = 0.85;
@@ -1217,8 +1215,8 @@ final class GlobalConfig {
     // 2 : plus verbose init messages
     // 3 : plus verbose boundary condition messages
     //
-    shared static bool report_residuals; // indicate if residuals are computed and reported
-    //                                   // to a file for time-integrated simulations
+    shared static bool writeTransientResiduals = false; // indicate if residuals are computed and reported
+    //                                                  // to a file for time-integrated simulations
     //
     shared static double start_time = 0.0; // Initial solution time, in seconds.
     shared static double max_time = 1.0e-3; // final solution time, in seconds, set by user
@@ -1312,7 +1310,7 @@ public:
     bool in_mpi_context;
     int universe_blk_id;
     string grid_format;
-    string flow_format;
+    string field_format;
     //
     int dimensions;
     bool true_centroids;
@@ -1336,7 +1334,6 @@ public:
     double shock_fitting_scale_factor;
     //
     bool solid_has_isotropic_properties;
-    bool solid_has_homogeneous_properties;
     bool solid_domain_augmented_deriv_avg;
     bool fluid_solid_bc_use_heat_transfer_coeff;
     //
@@ -1484,7 +1481,7 @@ public:
         in_mpi_context = cfg.in_mpi_context;
         this.universe_blk_id = universe_blk_id;
         grid_format = cfg.grid_format;
-        flow_format = cfg.flow_format;
+        field_format = cfg.field_format;
         dimensions = cfg.dimensions;
         true_centroids = cfg.true_centroids;
         axisymmetric = cfg.axisymmetric;
@@ -1509,7 +1506,6 @@ public:
         shock_fitting_scale_factor = cfg.shock_fitting_scale_factor;
         //
         solid_has_isotropic_properties = cfg.solid_has_isotropic_properties;
-        solid_has_homogeneous_properties = cfg.solid_has_homogeneous_properties;
         solid_domain_augmented_deriv_avg = cfg.solid_domain_augmented_deriv_avg;
         fluid_solid_bc_use_heat_transfer_coeff = cfg.fluid_solid_bc_use_heat_transfer_coeff;
         //
@@ -1717,7 +1713,7 @@ void set_config_for_core(JSONValue jsonData)
     mixin(update_enum("solver_mode", "solverMode", "solverModeFromName"));
     mixin(update_double("start_time", "start_time"));
     mixin(update_string("grid_format", "grid_format"));
-    mixin(update_string("flow_format", "flow_format"));
+    mixin(update_string("field_format", "field_format"));
     mixin(update_string("gas_model_file", "gas_model_file"));
     // The gas model may have been initialized earlier, possibly by a setGasModel call
     // in the user's Lua script.
@@ -1771,7 +1767,7 @@ void set_config_for_core(JSONValue jsonData)
     cfg.gravity_non_zero = !((cfg.gravity_x == 0.0) && (cfg.gravity_y == 0.0) && (cfg.gravity_z == 0.0));
     if (cfg.verbosity_level > 1) {
         writeln("  grid_format: ", to!string(cfg.grid_format));
-        writeln("  flow_format: ", to!string(cfg.flow_format));
+        writeln("  field_format: ", to!string(cfg.field_format));
         writeln("  gas_model_file: ", to!string(cfg.gas_model_file));
         writeln("  udf_supervisor_file: ", to!string(cfg.udf_supervisor_file));
         writeln("  user_pad_length: ", cfg.user_pad_length);
@@ -1836,7 +1832,6 @@ void set_config_for_core(JSONValue jsonData)
     mixin(update_double("solid_domain_cfl", "solid_domain_cfl"));
     mixin(update_enum("coupling_with_solid_domains", "coupling_with_solid_domains", "solidDomainCouplingFromName"));
     mixin(update_bool("solid_has_isotropic_properties", "solid_has_isotropic_properties"));
-    mixin(update_bool("solid_has_homogeneous_properties", "solid_has_homogeneous_properties"));
     mixin(update_bool("solid_domain_augmented_deriv_avg", "solid_domain_augmented_deriv_avg"));
     mixin(update_bool("fluid_solid_bc_use_heat_transfer_coeff", "fluid_solid_bc_use_heat_transfer_coeff"));
 
@@ -1864,7 +1859,6 @@ void set_config_for_core(JSONValue jsonData)
     mixin(update_bool("allow_interpolation_for_sensitivity_matrix", "allow_interpolation_for_sensitivity_matrix"));
     mixin(update_bool("suppress_radial_reconstruction_at_xaxis", "suppress_radial_reconstruction_at_xaxis"));
     mixin(update_bool("suppress_reconstruction_at_shocks", "suppress_reconstruction_at_shocks"));
-    mixin(update_bool("suppress_reconstruction_at_captured_shocks", "suppress_reconstruction_at_shocks")); // old name
     mixin(update_bool("suppress_reconstruction_at_boundaries", "suppress_reconstruction_at_boundaries"));
     mixin(update_enum("thermo_interpolator", "thermo_interpolator", "thermo_interpolator_from_name"));
     mixin(update_bool("allow_reconstruction_for_species", "allow_reconstruction_for_species"));
@@ -1936,7 +1930,6 @@ void set_config_for_core(JSONValue jsonData)
         writeln("  solid_domain_cfl: ", cfg.solid_domain_cfl);
         writeln("  coupling_with_solid_domains: ", cfg.coupling_with_solid_domains);
         writeln("  solid_has_isotropic_properties: ", cfg.solid_has_isotropic_properties);
-        writeln("  solid_has_homogeneous_properties: ", cfg.solid_has_homogeneous_properties);
         writeln("  solid_domain_augmented_deriv_avg: ", cfg.solid_domain_augmented_deriv_avg);
         writeln("  fluid_solid_bc_use_heat_transfer_coeff: ", cfg.fluid_solid_bc_use_heat_transfer_coeff);
         writeln("  apply_bcs_in_parallel: ", cfg.apply_bcs_in_parallel);
@@ -2117,6 +2110,7 @@ void set_config_for_core(JSONValue jsonData)
     mixin(update_bool("diffuse_wall_bcs_on_init", "diffuseWallBCsOnInit"));
     mixin(update_int("number_init_passes", "nInitPasses"));
     mixin(update_double("wall_temperature_on_init", "initTWall"));
+    mixin(update_bool("write_transient_residuals", "writeTransientResiduals"));
     mixin(update_int("control_count", "control_count"));
     mixin(update_bool("block_marching", "block_marching"));
     mixin(update_int("nib", "nib"));
@@ -2251,7 +2245,7 @@ void set_config_for_core(JSONValue jsonData)
     */
     //
     // We have enough information here to create the ConservedQuantitiesIndices struct.
-    cfg.cqi = new ConservedQuantitiesIndices(cfg.dimensions, cfg.turb_model.nturb, cfg.MHD, cfg.n_species, cfg.n_modes);
+    cfg.cqi = new ConservedQuantitiesIndices(cfg.dimensions, cfg.turb_model.nturb, cfg.MHD, cfg.n_species, cfg.n_modes, cfg.gmodel_master, cfg.turb_model);
 } // end set_config_for_core()
 
 void set_config_for_blocks(JSONValue jsonData)
@@ -2288,7 +2282,7 @@ void set_config_for_blocks(JSONValue jsonData)
             break;
         case "unstructured_grid":
             globalBlocks ~= new UFluidBlock(i, jsonDataForBlock);
-            dedicatedConfig[i].stringent_cfl = true; // for signal_frequency calc in FVCell.
+            dedicatedConfig[i].stringent_cfl = true; // for signal_frequency calc in FluidFVCell.
             break;
         default:
             throw new Error(format("Construction of fluidblock[%d], unknown grid type: %s", i, gridType));
@@ -2323,6 +2317,7 @@ void set_config_for_blocks(JSONValue jsonData)
         // Note that we want the solidblock ids to continue on from the fluidblocks.
         auto sblk = cast(SSolidBlock) globalBlocks[i];
         assert(sblk !is null, "Oops, this should be a SolidBlock object.");
+        sblk.initSolidThermalModel(jsonData);
         sblk.initLuaGlobals();
         sblk.initBoundaryConditions(jsonData["solid_block_" ~ to!string(sblk.id)]);
         if (cfg.udfSolidSourceTerms) {
@@ -2389,7 +2384,7 @@ void configCheckPoint1()
         cfg.flux_calculator == FluxCalculator.adaptive_ausmdv_asf) {
         cfg.do_shock_detect = true;
     }
-    if (cfg.do_shock_detect && cfg.is_master_task) {
+    if (cfg.do_shock_detect && cfg.is_master_task && cfg.verbosity_level > 1) {
         writeln("NOTE: shock detector is on.");
     }
     if (!cfg.high_order_flux_calculator) {

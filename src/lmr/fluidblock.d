@@ -29,7 +29,8 @@ import globaldata;
 import flowstate;
 import fvvertex;
 import fvinterface;
-import fvcell;
+import lmr.fluidfvcell;
+import lmr.coredata;
 import flowgradients;
 import bc;
 import user_defined_source_terms;
@@ -56,12 +57,14 @@ version(mpi_parallel) {
 // knowledge in the calling code.
 class FluidBlock : Block {
 public:
+    size_t ncells;
+    size_t nfaces;
     Grid_t grid_type; // structured or unstructured
     bool may_be_turbulent; // if true, the selected turbulence model is active
                            // within this block.
     double omegaz; // Angular velocity (in rad/s) of the rotating frame.
                    // There is only one component, about the z-axis.
-    number mass_balance; // domain mass balance used to monitor for steady state
+    double mass_balance; // domain mass balance used to assess convergence of steady-state simulations
     number L2_residual; // L2 norm of the global residual
     number mass_residual, energy_residual; // monitor these for steady state
     Vector3 mass_residual_loc, energy_residual_loc; // locations of worst case
@@ -72,10 +75,14 @@ public:
     //
     // Collections of cells, vertices and faces are held as arrays of references.
     // These allow us to conveniently work through the items via foreach statements.
-    FVCell[] cells;
+    FluidFVCell[] cells;
     FVInterface[] faces;
     FVVertex[] vertices;
     BoundaryCondition[] bc; // collection of references to the boundary conditions
+    //
+    // Dense core datastructures
+    FluidCellData celldata;
+    FVInterfaceData facedata;
 
     // We need to know the number of cells even if the grid is not read
     // for this block in the local process.
@@ -126,11 +133,11 @@ public:
     double normAcc, dotAcc;
     size_t nvars;
     Matrix!number Minv;
-    double[] R, dU, DinvR, r0, x0, rhs;
+    double[] R, R0, dU, DinvR, r0, x0, rhs;
     double[] v, w, zed;
     double[] g0, g1;
     Matrix!double Q1;
-    Matrix!double V;
+    double[] VT;
     }
 
     this(int id, string label)
@@ -181,6 +188,7 @@ public:
     @nogc abstract void find_enclosing_cell(ref const(Vector3) p, ref size_t indx, ref bool found);
     abstract void init_grid_and_flow_arrays(string gridFileName);
     @nogc abstract void compute_primary_cell_geometric_data(size_t gtl);
+    @nogc abstract void precompute_stencil_data(size_t gtl);
     @nogc abstract void compute_least_squares_setup(size_t gtl);
     @nogc abstract void sync_vertices_from_underlying_grid(size_t gtl=0);
     @nogc abstract void sync_vertices_to_underlying_grid(size_t gtl=0);
@@ -189,15 +197,114 @@ public:
     @nogc abstract void propagate_inflow_data_west_to_east();
     @nogc abstract void set_face_flowstates_to_averages_from_cells();
     @nogc abstract void convective_flux_phase0(bool allow_high_order_interpolation, size_t gtl=0,
-                                               FVCell[] cell_list = [], FVInterface[] iface_list = [],
+                                               FluidFVCell[] cell_list = [], FVInterface[] iface_list = [],
                                                FVVertex[] vertex_list = []);
     @nogc abstract void convective_flux_phase1(bool allow_high_order_interpolation, size_t gtl=0,
-                                               FVCell[] cell_list = [], FVInterface[] iface_list = [],
+                                               FluidFVCell[] cell_list = [], FVInterface[] iface_list = [],
                                                FVVertex[] vertex_list = []);
     @nogc abstract void convective_flux_phase2(bool allow_high_order_interpolation, size_t gtl=0,
-                                               FVCell[] cell_list = [], FVInterface[] iface_list = [],
+                                               FluidFVCell[] cell_list = [], FVInterface[] iface_list = [],
                                                FVVertex[] vertex_list = []);
     abstract size_t[] get_cell_write_indices();
+
+    void allocate_dense_celldata(size_t ncells, size_t nghost, size_t neq, size_t nftl)
+    {
+    /*
+        Both kinds of blocks now share a structure of densely packed core flow data. This routine
+        allocates the storage for these structures, attempting to keep related bits of data together
+        on the heap.
+
+        In an older draft of this code, I allocated all of the normal cells in one loop,
+        then added the ghost cells onto the end later. This caused all of the pointers
+        in the FVCell classes to no longer be pointing to the right objects, which was
+        very bad. The solution to this was to use .reserve on the arrays before
+        filling them, which prevented the pointers from being copied. Now however,
+        we do the cells and the ghost cells all at once, but we still do .reserve
+        because it should be faster.
+
+        @author: Nick Gibbons
+    */
+        auto gmodel = myConfig.gmodel;
+        size_t nturb = myConfig.turb_model.nturb;
+
+        celldata.all_cell_idxs.length = ncells;
+        celldata.halo_cell_ids.length = (ncells + nghost);
+        celldata.halo_face_ids.length = (ncells + nghost);
+        foreach(i; 0 .. ncells) celldata.all_cell_idxs[i] = i;
+
+        celldata.nfaces.length = ncells;
+        celldata.dt_local.length = ncells;
+        celldata.areas.length = ncells + nghost;
+        celldata.wall_distances.length = ncells;
+        celldata.data_is_bad.length = ncells;
+        celldata.in_turbulent_zone.length = ncells;
+        celldata.volumes.length = ncells + nghost;
+        celldata.lengths.length = ncells + nghost;
+        celldata.positions.length = ncells + nghost;
+        celldata.U0.length = (ncells + nghost)*neq*nftl;
+        if (nftl>1) celldata.U1.length = (ncells + nghost)*neq*nftl;
+        if (nftl>2) celldata.U2.length = (ncells + nghost)*neq*nftl;
+        if (nftl>3) celldata.U3.length = (ncells + nghost)*neq*nftl;
+        if (nftl>4) celldata.U4.length = (ncells + nghost)*neq*nftl;
+        celldata.dUdt0.length = (ncells + nghost)*neq*nftl;
+        if (nftl>1) celldata.dUdt1.length = (ncells + nghost)*neq*nftl;
+        if (nftl>2) celldata.dUdt2.length = (ncells + nghost)*neq*nftl;
+        if (nftl>3) celldata.dUdt3.length = (ncells + nghost)*neq*nftl;
+        if (nftl>4) celldata.dUdt4.length = (ncells + nghost)*neq*nftl;
+        celldata.source_terms.length = (ncells + nghost)*neq;
+
+        celldata.flowstates.reserve(ncells + nghost);
+        celldata.gradients.reserve(ncells + nghost);
+        celldata.workspaces.reserve(ncells + nghost);
+        foreach (n; 0 .. ncells+nghost) celldata.flowstates ~= FlowState(gmodel, nturb);
+        foreach (n; 0 .. ncells+nghost) celldata.gradients ~= FlowGradients(myConfig);
+        foreach (n; 0 .. ncells+nghost) celldata.workspaces ~= WLSQGradWorkspace();
+
+        version(newton_krylov) {
+            celldata.cell_jacobians.length = (ncells+nghost)*neq*neq;
+            celldata.saved_gradients.reserve(ncells + nghost);
+            foreach (n; 0 .. ncells+nghost) celldata.saved_gradients ~= FlowGradients(myConfig);
+            celldata.saved_source_terms.length = (ncells + nghost)*neq;
+            celldata.doNotPerturb.length = (ncells+nghost);
+        }
+    }
+
+    void allocate_dense_facedata(size_t nfaces, size_t nbfaces, size_t neq, size_t nftl)
+    {
+    /*
+        Both kinds of blocks now share a structure of densely packed core flow
+        data. This routine allocates the storage for these structures,
+        attempting to keep related bits of data together on the heap.
+
+        @author: Nick Gibbons
+    */
+        auto gmodel = myConfig.gmodel;
+        size_t nturb = myConfig.turb_model.nturb;
+
+        facedata.all_face_idxs.length = nfaces;
+        foreach(i; 0 .. nfaces) facedata.all_face_idxs[i] = i;
+
+        facedata.positions.length = nfaces;
+        facedata.areas.length = nfaces;
+        facedata.normals.length = nfaces;
+        facedata.tangents1.length = nfaces;
+        facedata.tangents2.length = nfaces;
+        facedata.left_interior_only.length = nfaces;
+        facedata.right_interior_only.length = nfaces;
+        facedata.stencil_idxs.length = nfaces;
+        facedata.fluxes.length = nfaces*neq;
+        facedata.f2c.length = nfaces;
+
+        if (myConfig.interpolation_order>=2) facedata.l2r2_interp_data.length = nfaces;
+        if (myConfig.interpolation_order==3) facedata.l3r3_interp_data.length = nfaces;
+
+        facedata.flowstates.reserve(nfaces);
+        foreach (n; 0 .. nfaces) facedata.flowstates ~= FlowState(gmodel, nturb);
+        facedata.gradients.reserve(nfaces);
+        foreach (n; 0 .. nfaces) facedata.gradients ~= FlowGradients(myConfig);
+        facedata.workspaces.reserve(nfaces);
+        foreach (n; 0 .. nfaces) facedata.workspaces ~= WLSQGradWorkspace();
+    }
 
     @nogc
     void identify_reaction_zones(int gtl)
@@ -237,7 +344,6 @@ public:
     // Adjust the in_suppress_reconstruction-zone flag for faces in this block.
     {
         foreach(f; faces) {
-            f.in_suppress_reconstruction_zone = false;
             if (myConfig.suppress_reconstruction_zones.length > 0 ) {
                 foreach(srz; myConfig.suppress_reconstruction_zones) {
                     if (srz.is_inside(f.pos, myConfig.dimensions)) {
@@ -246,7 +352,9 @@ public:
                 } // foreach srz
             }
             if (myConfig.suppress_reconstruction_at_boundaries && f.is_on_boundary) {
-                f.in_suppress_reconstruction_zone = true;
+                if (!startsWith(bc[f.bc_id].type, "exchange_")) {
+                    f.in_suppress_reconstruction_zone = true;
+                }
             }
         } // foreach face
         //
@@ -396,7 +504,7 @@ public:
     }
 
     @nogc
-    void estimate_turbulence_viscosity(FVCell[] cell_list = [])
+    void estimate_turbulence_viscosity(FluidFVCell[] cell_list = [])
     {
         version(turbulence) { // Exit instantly if turbulence capability disabled
         if (cell_list.length == 0) { cell_list = cells; }
@@ -438,8 +546,8 @@ public:
             auto gm = myConfig.gmodel;
             double Mx = -1.0*comp_tol.re;
             foreach (iface; faces) {
-                iface.fs.S = NNG_ShockDetector(gm, iface.left_cell.fs,
-                                                   iface.right_cell.fs,
+                iface.fs.S = NNG_ShockDetector(gm, *(iface.left_cell.fs),
+                                                   *(iface.right_cell.fs),
                                                    iface.n, Mx);
             }
             break;
@@ -578,7 +686,7 @@ public:
                         auto other_cell = (cell.outsign[i] == 1) ? face.right_cell : face.left_cell;
                         if (other_cell && other_cell.contains_flow_data &&
                             other_cell.fs.check_data(other_cell.pos[gtl], myConfig)) {
-                            neighbour_flows ~= &(other_cell.fs);
+                            neighbour_flows ~= other_cell.fs;
                         }
                     }
                     if (neighbour_flows.length == 0) {
@@ -626,18 +734,18 @@ public:
                 final switch (myConfig.spatial_deriv_calc) {
                 case SpatialDerivCalc.least_squares:
                     foreach(vtx; vertices) {
-                        vtx.grad.gradients_leastsq(vtx.cloud_fs, vtx.cloud_pos, *(vtx.ws_grad));
+                        vtx.grad.gradients_leastsq(myConfig, vtx.cloud_fs, vtx.cloud_pos, *(vtx.ws_grad));
                     }
                     break;
                 case SpatialDerivCalc.divergence:
                     foreach(vtx; vertices) {
-                        vtx.grad.gradients_xy_div(vtx.cloud_fs, vtx.cloud_pos);
+                        vtx.grad.gradients_xy_div(myConfig, vtx.cloud_fs, vtx.cloud_pos);
                     }
                 } // end switch
             } else {
                 // Have only least-squares in 3D.
                 foreach(vtx; vertices) {
-                    vtx.grad.gradients_leastsq(vtx.cloud_fs, vtx.cloud_pos, *(vtx.ws_grad));
+                    vtx.grad.gradients_leastsq(myConfig, vtx.cloud_fs, vtx.cloud_pos, *(vtx.ws_grad));
                 }
             }
 
@@ -659,19 +767,19 @@ public:
                 final switch (myConfig.spatial_deriv_calc) {
                 case SpatialDerivCalc.least_squares:
                     foreach(iface; faces) {
-                        iface.grad.gradients_leastsq(iface.cloud_fs, iface.cloud_pos, *(iface.ws_grad));
+                        iface.grad.gradients_leastsq(myConfig, iface.cloud_fs, iface.cloud_pos, *(iface.ws_grad));
                     }
                     break;
                 case SpatialDerivCalc.divergence:
                     foreach(iface; faces) {
-                        iface.grad.gradients_xy_div(iface.cloud_fs, iface.cloud_pos);
+                        iface.grad.gradients_xy_div(myConfig, iface.cloud_fs, iface.cloud_pos);
                     }
                 } // end switch
             } else { //3D
                 final switch (myConfig.spatial_deriv_calc) {
                 case SpatialDerivCalc.least_squares:
                     foreach(iface; faces) {
-                        iface.grad.gradients_leastsq(iface.cloud_fs, iface.cloud_pos, *(iface.ws_grad));
+                        iface.grad.gradients_leastsq(myConfig, iface.cloud_fs, iface.cloud_pos, *(iface.ws_grad));
                     }
                     break;
                 case SpatialDerivCalc.divergence:
@@ -694,7 +802,7 @@ public:
             final switch (myConfig.spatial_deriv_calc) {
             case SpatialDerivCalc.least_squares:
                 foreach(cell; cells) {
-                    cell.grad.gradients_leastsq(cell.cloud_fs, cell.cloud_pos, *(cell.ws_grad));
+                    cell.grad.gradients_leastsq(myConfig, cell.cloud_fs, cell.cloud_pos, *(cell.ws_grad));
                 }
                 break;
             case SpatialDerivCalc.divergence:
@@ -746,7 +854,7 @@ public:
         mass_residual_loc.clear();
         energy_residual = 0.0;
         energy_residual_loc.clear();
-        foreach(FVCell cell; cells) {
+        foreach(FluidFVCell cell; cells) {
             cell.rho_at_start_of_step = cell.fs.gas.rho;
             cell.rE_at_start_of_step = cell.U[0][cqi.totEnergy];
         }
@@ -770,7 +878,7 @@ public:
         mass_residual_loc.clear();
         energy_residual = 0.0;
         energy_residual_loc.clear();
-        foreach(FVCell cell; cells) {
+        foreach(FluidFVCell cell; cells) {
             number local_residual = (cell.fs.gas.rho - cell.rho_at_start_of_step) / cell.fs.gas.rho;
             local_residual = fabs(local_residual);
             if ( local_residual > mass_residual ) {
@@ -814,7 +922,7 @@ public:
         auto cqi = myConfig.cqi;
         L2_residual = 0.0;
         foreach (cell; cells) {
-            L2_residual += fabs(cell.dUdt[0][cqi.mass])^^2;
+            if (cqi.mass==0) L2_residual += fabs(cell.dUdt[0][cqi.mass])^^2;
 	    L2_residual += fabs(cell.dUdt[0][cqi.xMom])^^2;
 	    L2_residual += fabs(cell.dUdt[0][cqi.yMom])^^2;
 	    if (cqi.threeD) { L2_residual += fabs(cell.dUdt[0][cqi.zMom])^^2; }
@@ -845,7 +953,13 @@ public:
         foreach(boundary; bc) {
             if (boundary.type != "exchange_over_full_face" && boundary.type != "exchange_using_mapped_cells") {
                 foreach(i, face; boundary.faces) {
-                    mass_balance += boundary.outsigns[i] * face.F[cqi.mass] * face.area[0];
+                    double massflux=0.0;
+                    if (cqi.mass==0) {
+                        massflux = face.F[cqi.mass].re;
+                    } else {
+                        foreach(isp; 0 .. cqi.n_species) massflux += face.F[cqi.species+isp].re;
+                    }
+                    mass_balance += boundary.outsigns[i] * massflux * face.area[0].re;
                 }
             }
         }
@@ -906,16 +1020,17 @@ public:
     {
         double min_L_for_block, cfl_local, cfl_max;
         bool first = true;
-        foreach(FVCell cell; cells) {
+        bool gridFlag = grid_type == Grid_t.structured_grid;
+        foreach(FluidFVCell cell; cells) {
             // Search for the minimum length scale and the maximum CFL value in the block.
             if (first) {
                 min_L_for_block = cell.L_min.re;
-                cfl_local = cell.signal_frequency() * dt_current;
+                cfl_local = cell.signal_frequency(gridFlag) * dt_current;
                 cfl_max = cfl_local;
                 first = false;
             } else {
                 min_L_for_block = fmin(cell.L_min.re, min_L_for_block);
-                cfl_local = cell.signal_frequency() * dt_current;
+                cfl_local = cell.signal_frequency(gridFlag) * dt_current;
                 cfl_max = fmax(cfl_local, cfl_max);
             }
         }
@@ -967,8 +1082,9 @@ public:
         // for local time-stepping we limit the larger time-steps by a factor of the smallest timestep
         int local_time_stepping_limit_factor = myConfig.local_time_stepping_limit_factor;
         bool first = true;
-        foreach(FVCell cell; cells) {
-            signal = cell.signal_frequency();
+        bool gridFlag = grid_type == Grid_t.structured_grid;
+        foreach(FluidFVCell cell; cells) {
+            signal = cell.signal_frequency(gridFlag);
 	    if (myConfig.with_super_time_stepping) {
                 signal_hyp = cell.signal_hyp.re;
                 signal_parab = cell.signal_parab.re;
@@ -982,6 +1098,8 @@ public:
                 }
                 // Set the allowable time-step based on hyperbolic time-step.
                 dt_allow = fmin(dt_allow_hyp, GlobalConfig.dt_max);
+                cell.dt_hyper = cfl_value / signal_hyp;
+                cell.dt_parab = cfl_value / signal_parab;
             } else {
                 // no STS
                 dt_allow_hyp = 0;
@@ -1106,12 +1224,11 @@ public:
             if (!bndary.ghost_cell_data_available) { continue; }
             if (bndary.type == "exchange_using_mapped_cells" ||
                 bndary.type == "exchange_over_full_face" ||
-                bndary.type == "do_nothing")
-            {
+                bndary.type == "do_nothing") {
                 continue;
             }
             foreach ( iface, face; bndary.faces) {
-                FVCell ghost_cell; FVCell cell;
+                FluidFVCell ghost_cell, cell;
                 if (bndary.outsigns[iface] == 1) {
                     cell = face.left_cell;
                     ghost_cell = face.right_cell;
@@ -1139,7 +1256,7 @@ public:
         foreach (pcell; cells) {
             // loop through cells that will have non-zero entries
             foreach(cell; pcell.cell_list) {
-                assert(cell.id < ghost_cell_start_id, "Oops, we expect to not find a ghost cell at this point.");
+                assert(!cell.is_ghost, "Oops, we expect to not find a ghost cell at this point.");
                 size_t jidx = cell.id; // column index
                 // populate entry with a place holder value
                 ptJac.local.aa[ptJac.aa_idx] = 1.0;
@@ -1194,8 +1311,6 @@ public:
         // we now construct the full sparse matrix by replacing each entry with an nConserved x nConserved block
         auto cqi = myConfig.cqi;
         auto nConserved = cqi.n;
-        // remove the conserved mass variable for multi-species gas
-        if (cqi.n_species > 1) { nConserved -= 1; }
 
         flowJacobian = new FlowJacobian(sigma, myConfig.dimensions, nConserved, spatial_order_of_jacobian, ptJac.local.aa.length, ncells);
         flowJacobian.local.ia[flowJacobian.ia_idx] = 0;
@@ -1269,6 +1384,10 @@ public:
         // zero entries
         flowJacobian.local.aa[] = 0.0;
 
+        // temporarily change flux calculator
+        auto flux_calculator_save = myConfig.flux_calculator;
+        myConfig.flux_calculator = myConfig.flux_calculator; // TODO: add preconditionMatrixFluxCalculator back
+
         // temporarily change interpolation order
         shared int interpolation_order_save = GlobalConfig.interpolation_order;
         myConfig.interpolation_order = to!int(flowJacobian.spatial_order);
@@ -1313,22 +1432,23 @@ public:
         // add boundary condition corrections to boundary cells
         apply_jacobian_bcs();
 
+        // return flux calculator to its original state
+        myConfig.flux_calculator = flux_calculator_save;
+
         // return the interpolation order to its original state
         myConfig.interpolation_order = interpolation_order_save;
     } // end evaluate_jacobian()
 
-    void evaluate_cell_contribution_to_jacobian(FVCell pcell)
+    void evaluate_cell_contribution_to_jacobian(FluidFVCell pcell)
     {
         auto cqi = myConfig.cqi; // was GlobalConfig.cqi;
         auto nConserved = cqi.n;
-        // remove the conserved mass variable for multi-species gas
-        if (cqi.n_species > 1) { nConserved -= 1; }
         auto eps0 = flowJacobian.eps;
         number eps;
         int ftl = 1; int gtl = 0;
 
         // save a copy of the flowstate and copy conserved quantities
-        fs_save.copy_values_from(pcell.fs);
+        fs_save.copy_values_from(*(pcell.fs));
         pcell.U[ftl].copy_values_from(pcell.U[0]);
 
         // perturb the current cell's conserved quantities
@@ -1354,15 +1474,25 @@ public:
             }
 
             // return cell to original state
-            pcell.U[ftl].copy_values_from(pcell.U[0]);
-            pcell.fs.copy_values_from(*fs_save);
-            if (myConfig.viscous) {
-                foreach (cell; pcell.cell_list) { cell.grad.copy_values_from(*(cell.grad_save)); }
+            version(complex_numbers) {
+                pcell.U[ftl].copy_values_from(pcell.U[0]);
+                pcell.fs.copy_values_from(*fs_save);
+                if (myConfig.viscous) {
+                    foreach (cell; pcell.cell_list) { cell.grad.copy_values_from(*(cell.grad_save)); }
+                }
+                if (flowJacobian.spatial_order >= 2) {
+                    foreach(cell; pcell.cell_list) { cell.gradients.copy_values_from(*(cell.gradients_save)); }
+                }
+            } else {
+                // TODO: for structured grids employing a real-valued low-order numerical Jacobian as
+                // the precondition matrix the above code doesn't completely clean up the effect of the
+                // perturbuation. Note that this does not occur for unstructured grids.
+                // This is currently under investigation, in the interim we will apply the more costly
+                // method of re-evaluating evalRHS with the unperturbed conserved state. KAD 2023-08-31
+                pcell.U[ftl].copy_values_from(pcell.U[0]);
+                pcell.decode_conserved(gtl, 0, 0.0);
+                evalRHS(gtl, 0, pcell.cell_list, pcell.face_list, pcell);
             }
-            if (flowJacobian.spatial_order >= 2) {
-                foreach(cell; pcell.cell_list) { cell.gradients.copy_values_from(*(cell.gradients_save)); }
-            }
-
         }
 
         // we now populate the pre-sized sparse matrix representation of the flow Jacobian
@@ -1373,10 +1503,10 @@ public:
             foreach(cell; pcell.cell_list) {
                 // loop through nConserved columns for each effected cell
                 for ( size_t jp = 0; jp < nConserved; ++jp ) {
-                    assert(cell.id < ghost_cell_start_id, "Oops, we expect to not find a ghost cell at this point.");
+                    assert(!cell.is_ghost, "Oops, we expect to not find a ghost cell at this point.");
                     size_t I = cell.id*nConserved + ip;
                     size_t J = pcell.id*nConserved + jp;
-                    flowJacobian.local[I,J] = cell.dRdU[ip][jp];
+                    flowJacobian.local[I,J] = cell.dRdU[ip][jp].re;
                 }
             }
         }
@@ -1399,8 +1529,6 @@ public:
          */
         auto cqi = myConfig.cqi; // The block object has its own.
         auto nConserved = cqi.n;
-        // remove the conserved mass variable for multi-species gas
-        if (cqi.n_species > 1) { nConserved -= 1; }
         auto eps0 = flowJacobian.eps;
         number eps;
         int gtl = 0; int ftl = 1;
@@ -1413,7 +1541,7 @@ public:
                 continue;
             }
             foreach ( bi, bface; bndary.faces) {
-                FVCell ghost_cell; FVCell pcell;
+                FluidFVCell ghost_cell, pcell;
                 if (bndary.outsigns[bi] == 1) {
                     pcell = bface.left_cell;
                     ghost_cell = bface.right_cell;
@@ -1427,7 +1555,7 @@ public:
                 // U: interior cell conserved quantities
 
                 // save a copy of the flowstate and copy conserved quantities
-                fs_save.copy_values_from(pcell.fs);
+                fs_save.copy_values_from(*(pcell.fs));
                 pcell.U[ftl].copy_values_from(pcell.U[0]);
                 ghost_cell.encode_conserved(gtl, 0, 0.0);
 
@@ -1463,7 +1591,7 @@ public:
                 // u: ghost cell conserved quantities
 
                 // save a copy of the flowstate and copy conserved quantities
-                fs_save.copy_values_from(ghost_cell.fs);
+                fs_save.copy_values_from(*(ghost_cell.fs));
                 ghost_cell.U[ftl].copy_values_from(ghost_cell.U[0]);
 
                 foreach(idx; 0..nConserved) {
@@ -1486,28 +1614,38 @@ public:
                     }
 
                     // return cell to original state
-                    ghost_cell.U[ftl].copy_values_from(ghost_cell.U[0]);
-                    ghost_cell.fs.copy_values_from(*fs_save);
-                    if (myConfig.viscous) {
-                        foreach (cell; ghost_cell.cell_list) { cell.grad.copy_values_from(*(cell.grad_save)); }
+                    version(complex_numbers) {
+                        ghost_cell.U[ftl].copy_values_from(ghost_cell.U[0]);
+                        ghost_cell.fs.copy_values_from(*fs_save);
+                        if (myConfig.viscous) {
+                            foreach (cell; ghost_cell.cell_list) { cell.grad.copy_values_from(*(cell.grad_save)); }
+                        }
+                        if (flowJacobian.spatial_order >= 2) {
+                            foreach(cell; ghost_cell.cell_list) { cell.gradients.copy_values_from(*(cell.gradients_save)); }
+                        }
+                    } else {
+                        // TODO: for structured grids employing a real-valued low-order numerical Jacobian as
+                        // the precondition matrix the above code doesn't completely clean up the effect of the
+                        // perturbuation. Note that this does not occur for unstructured grids.
+                        // This is currently under investigation, in the interim we will apply the more costly
+                        // method of re-evaluating evalRHS with the unperturbed conserved state. KAD 2023-08-31
+                        ghost_cell.U[ftl].copy_values_from(ghost_cell.U[0]);
+                        ghost_cell.decode_conserved(gtl, 0, 0.0);
+                        evalRHS(gtl, 0, ghost_cell.cell_list, ghost_cell.face_list, ghost_cell);
                     }
-                    if (flowJacobian.spatial_order >= 2) {
-                        foreach(cell; ghost_cell.cell_list) { cell.gradients.copy_values_from(*(cell.gradients_save)); }
-                    }
-
                 }
 
                 // Step 3. Calculate dR/dU and add corrections to Jacobian
                 // dR/dU = dR/du * du/dU
                 foreach(bcell; ghost_cell.cell_list) { //
-                    assert(bcell.id < ghost_cell_start_id, "Oops, we expect to not find a ghost cell at this point.");
+                    assert(!bcell.is_ghost, "Oops, we expect to not find a ghost cell at this point.");
                     size_t I, J;
                     for ( size_t i = 0; i < nConserved; ++i ) {
                         I = bcell.id*nConserved + i; // column index
                         for ( size_t j = 0; j < nConserved; ++j ) {
                             J = pcell.id*nConserved + j; // row index
                             for (size_t k = 0; k < nConserved; k++) {
-                                flowJacobian.local[I,J] = flowJacobian.local[I,J] + bcell.dRdU[i][k]*flowJacobian.dudU[k][j];
+                                flowJacobian.local[I,J] = flowJacobian.local[I,J] + bcell.dRdU[i][k].re*flowJacobian.dudU[k][j];
                             }
                         }
                     }
@@ -1516,8 +1654,7 @@ public:
         } // foreach ( bndary; bc )
     } // end apply_jacobian_bcs()
 
-
-    void evalRHS(int gtl, int ftl, ref FVCell[] cell_list, FVInterface[] iface_list, FVCell pcell)
+    void evalRHS(int gtl, int ftl, ref FluidFVCell[] cell_list, FVInterface[] iface_list, FluidFVCell pcell)
     /*
      *  This method evaluates the RHS residual on a subset of cells for a given FluidBlock.
      *  It is used when constructing the numerical Jacobian.
@@ -1549,7 +1686,7 @@ public:
             // currently only for least-squares at faces
             // TODO: generalise for all spatial gradient methods
             foreach(c; cell_list) {
-                c.grad.gradients_leastsq(c.cloud_fs, c.cloud_pos, *(c.ws_grad)); // flow_property_spatial_derivatives(0);
+                c.grad.gradients_leastsq(myConfig, c.cloud_fs, c.cloud_pos, *(c.ws_grad)); // flow_property_spatial_derivatives(0);
             }
 
             // we need to average cell-centered spatial (/viscous) gradients to get approximations of the gradients
@@ -1612,11 +1749,9 @@ public:
 
     } // end evalRHS()
 
-    void allocate_GMRES_workspace(int maxLinearSolverIterations)
+    void allocate_GMRES_workspace(int maxLinearSolverIterations, bool useRealValuedFrechetDerivative)
     {
         size_t nConserved = GlobalConfig.cqi.n;
-        // remove the conserved mass variable for multi-species gas
-        if (GlobalConfig.cqi.n_species > 1) { nConserved -= 1; }
         int n_species = GlobalConfig.gmodel_master.n_species();
         int n_modes = GlobalConfig.gmodel_master.n_modes();
         maxRate = new ConservedQuantities(nConserved);
@@ -1627,6 +1762,7 @@ public:
         nvars = n;
         // Now allocate arrays and matrices
         R.length = n;
+        if (useRealValuedFrechetDerivative) { R0.length = n; }
         dU.length = n; dU[] = 0.0;
         r0.length = n;
         x0.length = n;
@@ -1637,25 +1773,25 @@ public:
         zed.length = n;
         g0.length = m+1;
         g1.length = m+1;
-        V = new Matrix!double(n, m+1);
+        VT.length = (m+1)*n;
         Q1 = new Matrix!double(m+1, m+1);
     }
 
     } // end version(newton_krylov)
 
-    void evalRU(double t, int gtl, int ftl, FVCell c, bool do_reconstruction, double reaction_fraction)
+    void evalRU(double t, int gtl, int ftl, FluidFVCell c, bool do_reconstruction, double reaction_fraction)
     {
         // This method evaluates the R(U) for a single cell.
         // It is used when constructing the numerical Jacobian.
         // Adapted from Kyle's evalRHS().
         //
-        // [TODO] PJ 2021-05-15 Might be good to move this code to the FVCell class
+        // [TODO] PJ 2021-05-15 Might be good to move this code to the FluidFVCell class
         // but we will need to make the flux-calculation functions more cell centric.
         //
         foreach(f; c.iface) { f.F.clear(); }
         c.clear_source_vector();
         //
-        FVCell[1] cell_list = [c];
+        FluidFVCell[1] cell_list = [c];
         convective_flux_phase0(do_reconstruction, gtl, cell_list, c.iface);
         convective_flux_phase1(do_reconstruction, gtl, cell_list, c.iface);
         convective_flux_phase2(do_reconstruction, gtl, cell_list, c.iface);
@@ -1683,13 +1819,13 @@ public:
                 foreach (vtx; c.vtx) {
                     if (myConfig.dimensions == 2) {
                         if (myConfig.spatial_deriv_calc == SpatialDerivCalc.least_squares) {
-                            vtx.grad.gradients_leastsq(vtx.cloud_fs, vtx.cloud_pos, *(vtx.ws_grad));
+                            vtx.grad.gradients_leastsq(myConfig, vtx.cloud_fs, vtx.cloud_pos, *(vtx.ws_grad));
                         } else {
-                            vtx.grad.gradients_xy_div(vtx.cloud_fs, vtx.cloud_pos);
+                            vtx.grad.gradients_xy_div(myConfig, vtx.cloud_fs, vtx.cloud_pos);
                         }
                     } else {
                         // Have only least-squares in 3D.
-                        vtx.grad.gradients_leastsq(vtx.cloud_fs, vtx.cloud_pos, *(vtx.ws_grad));
+                        vtx.grad.gradients_leastsq(myConfig, vtx.cloud_fs, vtx.cloud_pos, *(vtx.ws_grad));
                     }
                 } // end foreach vtx
                 // We've finished computing gradients at vertices, now copy them around if needed.
@@ -1704,13 +1840,13 @@ public:
                 foreach(f; c.iface) {
                     if (myConfig.dimensions == 2) {
                         if (myConfig.spatial_deriv_calc == SpatialDerivCalc.least_squares) {
-                            f.grad.gradients_leastsq(f.cloud_fs, f.cloud_pos, *(f.ws_grad));
+                            f.grad.gradients_leastsq(myConfig, f.cloud_fs, f.cloud_pos, *(f.ws_grad));
                         } else {
-                            f.grad.gradients_xy_div(f.cloud_fs, f.cloud_pos);
+                            f.grad.gradients_xy_div(myConfig, f.cloud_fs, f.cloud_pos);
                         }
                     } else {
                         // 3D has only least-squares available.
-                        f.grad.gradients_leastsq(f.cloud_fs, f.cloud_pos, *(f.ws_grad));
+                        f.grad.gradients_leastsq(myConfig, f.cloud_fs, f.cloud_pos, *(f.ws_grad));
                     } // end if (myConfig.dimensions)
                 } // end foreach f
                 // Finished computing gradients at faces, now copy them around if needed.
@@ -1720,7 +1856,7 @@ public:
                 }
                 break;
             case SpatialDerivLocn.cells:
-                c.grad.gradients_leastsq(c.cloud_fs, c.cloud_pos, *(c.ws_grad));
+                c.grad.gradients_leastsq(myConfig, c.cloud_fs, c.cloud_pos, *(c.ws_grad));
                 // We need to average cell-centered spatial (/viscous) gradients
                 // to get approximations of the gradients at the faces for the viscous flux.
                 foreach(f; c.iface) { f.average_cell_deriv_values(gtl); }

@@ -33,12 +33,19 @@ import globaldata;
 import simcore;
 import simcore_exchange : exchange_ghost_cell_geometry_data;
 import bc;
+import bc.ghost_cell_effect.gas_solid_full_face_copy;
+import solid_gas_full_face_copy;
+import solid_full_face_copy : SolidGCE_SolidGhostCellFullFaceCopy;
+import solidfvinterface : initPropertiesAtSolidInterfaces;
 import fluidblock : FluidBlock;
 import sfluidblock : SFluidBlock;
 import ufluidblock : UFluidBlock;
-import blockio : blkIO, BinaryBlockIO, GzipBlockIO;
+import ssolidblock : SSolidBlock;
+import blockio : BinaryBlockIO, GzipBlockIO;
+import lmr.fvcell : FVCell;
 import fvcellio;
 import fileutil : ensure_directory_is_present;
+import lmr.loads : init_loads_metadata_file;
 
 version(mpi_parallel) {
     import mpi;
@@ -76,7 +83,7 @@ void initConfiguration()
 void readControl()
 {
     alias cfg = GlobalConfig;
-    if (cfg.verbosity_level > 1) writeln("readControl()");
+    if (cfg.verbosity_level > 2) writeln("readControl()");
     JSONValue jsonData = readJSONfile(lmrCfg.ctrlFile);
     mixin(update_double("dt_init", "dt_init"));
     mixin(update_double("dt_max", "dt_max"));
@@ -102,7 +109,7 @@ void readControl()
     //
     mixin(update_int("halt_now", "halt_now"));
     //
-    if (cfg.verbosity_level > 1) {
+    if (cfg.verbosity_level > 2) {
         writeln("  dt_init: ", cfg.dt_init);
         writeln("  dt_max: ", cfg.dt_max);
         writeln("  cfl_scale_factor: ", cfg.cfl_scale_factor);
@@ -133,21 +140,24 @@ void readControl()
 }
 
 /**
- * Assign fluid blocks to the localFluidBlocks container and set IDs.
+ * Assign (fluid/solid) blocks to the local(Fluid/Solid)Blocks container and set IDs.
  *
- * Each process only works on updating blocks that reside in localFluidBlocks.
- * For MPI simulations, localFluidBlocks contains different blocks on different ranks.
- * This function is resposnsible for doing that assignment of blocks at the
+ * Each process only works on updating blocks that reside in local(Fluid)Blocks.
+ * For MPI simulations, local(Fluid)Blocks contains different blocks on different ranks.
+ * This function is responsible for doing that assignment of blocks at the
  * initialisation stage.
  *
  * For a shared-memory simulation, *all* blocks are assigned to the localFluidBlocks container.
  *
- * Additionally the block ids are set in loclFluidBlockIds
+ * Additionally the block ids are set in local(Fluid)BlockIds
  *
  * Authors: RJG and PAJ
  * Date: 2023-05-07
+ * History:
+ *   2024-02-25 -- add in handling for solid blocks
+ *
  */
-void initLocalFluidBlocks()
+void initLocalBlocks()
 {
     alias cfg = GlobalConfig;
     version(mpi_parallel) {
@@ -172,10 +182,8 @@ void initLocalFluidBlocks()
             if (taskid == my_rank) {
                 auto fblk = cast(FluidBlock) globalBlocks[blkid];
                 if (fblk) { localFluidBlocks ~= fblk; }
-		/+ [TODO] Add in solid blocks.
                 auto sblk = cast(SSolidBlock) globalBlocks[blkid];
                 if (sblk) { localSolidBlocks ~= sblk; }
-		+/
             }
         }
         MPI_Barrier(MPI_COMM_WORLD);
@@ -185,18 +193,16 @@ void initLocalFluidBlocks()
         }
     }
     else {
-	foreach (blk; globalBlocks) {
-	    auto fblk = cast(FluidBlock) blk;
-	    if (fblk) { localFluidBlocks ~= fblk; }
-	    /+ [TODO] add in solid blocks
-	     auto mysblk = cast(SSolidBlock) blk;
-	     if (mysblk) { localSolidBlocks ~= mysblk; }
-	     +/
-	}
+	    foreach (blk; globalBlocks) {
+            auto fblk = cast(FluidBlock) blk;
+	        if (fblk) { localFluidBlocks ~= fblk; }
+            auto mysblk = cast(SSolidBlock) blk;
+            if (mysblk) { localSolidBlocks ~= mysblk; }
+	    }
     }
-
     // Set block IDs
-    foreach (blk; localFluidBlocks) cfg.localFluidBlockIds ~= blk.id;
+    foreach (blk; localFluidBlocks) { cfg.localFluidBlockIds ~= blk.id; }
+    foreach (blk; localSolidBlocks) { cfg.localSolidBlockIds ~= blk.id; }
 
 }
 
@@ -212,7 +218,7 @@ void initLocalFluidBlocks()
 void initThreadPool(int maxCPUs, int threadsPerMPITask)
 {
     // Local blocks may be handled with thread-parallelism.
-    auto nBlocksInThreadParallel = localFluidBlocks.length; // [TODO] add solid blocks
+    auto nBlocksInThreadParallel = localFluidBlocks.length + localSolidBlocks.length;
     // There is no need to have more task threads than blocks local to the process.
     int extraThreadsInPool;
     version(mpi_parallel) {
@@ -291,7 +297,7 @@ void initFluidBlocksBasic(bool withUserPad=false)
  */
 void initFluidBlocksMemoryAllocation()
 {
-    bool anyBlockFail = false;
+    shared bool anyBlockFail = false;
     foreach (blk; parallel(localFluidBlocks,1)) {
         try {
             string gName;
@@ -373,16 +379,25 @@ void initFluidBlocksZones()
  */
 void initFluidBlocksFlowField(int snapshotStart)
 {
+    // Note that we are not doing the work here in parallel, for a shared-memory run.
+    // [TODO] PJ 2024-03-05 Maybe we could.
     bool anyBlockFail = false;
-    if (GlobalConfig.flow_format == "rawbinary")
-	blkIO = new BinaryBlockIO();
+    if (GlobalConfig.field_format == "rawbinary")
+        fluidBlkIO = new BinaryBlockIO();
     else
-	blkIO = new GzipBlockIO();
+        fluidBlkIO = new GzipBlockIO();
 
-    blkIO.readMetadataFromFile(lmrCfg.flowMetadataFile);
+    fluidBlkIO.readMetadataFromFile(lmrCfg.fluidMetadataFile);
+
+    // Note that we have already just computed the cell centroids based on the vertex
+    // positions, so we won't read them in from the snapshot file upon start-up.
+    string[3] varsToSkip = ["pos.x", "pos.y", "pos.z"];
 
     foreach (blk; localFluidBlocks) {
-        blkIO.readVariablesFromFile(flowFilename(snapshotStart, blk.id), blk.cells);
+        FVCell[] cells;
+        cells.length = blk.cells.length;
+        foreach (i, ref c; cells) c = blk.cells[i];
+        fluidBlkIO.readVariablesFromFile(fluidFilename(snapshotStart, blk.id), cells, varsToSkip);
         // Note that, even for grid_motion==none simulations, we use the grid velocities for setting
         // the gas velocities at boundary faces.  These will need to be set to zero for correct viscous simulation.
         foreach (iface; blk.faces) iface.gvel.clear();
@@ -418,27 +433,6 @@ void initFluidBlocksFlowField(int snapshotStart)
     import core.stdc.stdlib : exit;
     exit(1);
     */
-}
-
-/**
- * Initialise the simulation start time (for a transient simulation).
- *
- * Authors: RJG and PAJ
- * Date: 2024-02-12
- */
-void initSimStateTime(int snapshotStart)
-{
-    if (snapshotStart == 0) {
-        SimState.time = 0.0;
-        return;
-    }
-
-    // For all other starts, we need to look up the times file.
-    // [TODO] RJG, 2024-02-12
-    // This will need to be done when implementing restarts for transient mode.
-    writefln("Restart is offline for transient mode, sorry.");
-    import core.stdc.stdlib : exit;
-    exit(1);
 }
 
 /**
@@ -657,44 +651,201 @@ void orderBlocksBySize()
 }
 
 /**
- * Initialise directory and files for history cells.
+ * Initialise solid blocks.
  *
- * Authors: RJG and PAJ
- * Date: 2024-02-07
+ * Authors: RJG and KAD
+ * Date: 2024-02-25
  */
-void initHistoryCells()
+void initSolidBlocks()
 {
-    string histDir = lmrCfg.historyDir;
-    if (GlobalConfig.is_master_task) ensure_directory_is_present(histDir);
-    version(mpi_parallel) { MPI_Barrier(MPI_COMM_WORLD); }
-
-    foreach (hcell; GlobalConfig.hcells) {
-        auto blkId = hcell[0];
-        auto cellId = hcell[1];
-        auto blk = cast(FluidBlock) globalBlocks[blkId];
-        assert(blk !is null, "Oops, this should be a FluidBlock object.");
-        if (find(GlobalConfig.localFluidBlockIds, blkId).empty) { continue; }
-        if ( cellId >= blk.cells.length ) {
-            string errMsg = "ERROR: init_history_cell_files()\n";
-            errMsg ~= format("The requested history cell index %d is not valid for block %d.\n", cellId, blkId);
-            errMsg ~= format("This block only has %d cells.\n", blk.cells.length);
-            throw new FlowSolverException(errMsg);
+    solidBlkIO = (GlobalConfig.field_format == "rawbinary") ? new BinaryBlockIO() : new GzipBlockIO();
+    solidBlkIO.readMetadataFromFile(lmrCfg.solidMetadataFile);
+    foreach (ref solidBlk; localSolidBlocks) {
+        solidBlk.assembleArrays();
+        solidBlk.bindFacesAndVerticesToCells();
+        solidBlk.bindCellsToFaces();
+        auto gName = gridFilename(SimState.current_tindx, solidBlk.id);
+        solidBlk.readGrid(gName);
+        FVCell[] cells;
+        cells.length = solidBlk.cells.length;
+        foreach (i, ref c; cells) c = solidBlk.cells[i];
+        solidBlkIO.readVariablesFromFile(solidFilename(SimState.current_tindx, solidBlk.id), cells);
+        solidBlk.computePrimaryCellGeometricData();
+        solidBlk.assignCellLocationsForDerivCalc();
+    }
+    // setup communication across blocks
+    foreach (myblk; localSolidBlocks) {
+        foreach (bc; myblk.bc) {
+            foreach (gce; bc.preSpatialDerivActionAtBndryCells) {
+                auto mygce = cast(SolidGCE_SolidGhostCellFullFaceCopy)gce;
+                if (mygce) { mygce.set_up_cell_mapping_phase0(); }
+            }
         }
-        string basicName = historyFilename(blkId, cellId);
-        auto foundTheseEntries = dirEntries(histDir, basicName~".*", SpanMode.shallow);
-        string[] foundTheseNames;
-        foreach (entry; foundTheseEntries) { foundTheseNames ~= entry.name; }
-        string fname = format("%s.%d", histDir, basicName, foundTheseNames.length);
-        auto f = File(fname, "w");
-        f.write("# 1:t ");
-        foreach (i, var; GlobalConfig.flow_variable_list) {
-            f.write(format("%d:%s ", i+2, var));
+    }
+    foreach (myblk; localSolidBlocks) {
+        foreach (bc; myblk.bc) {
+            foreach (gce; bc.preSpatialDerivActionAtBndryCells) {
+                auto mygce = cast(SolidGCE_SolidGhostCellFullFaceCopy)gce;
+                if (mygce) { mygce.set_up_cell_mapping_phase1(); }
+            }
         }
-        f.write("\n");
-        f.close();
-    } // end foreach hcell
+    }
+    foreach (myblk; localSolidBlocks) {
+        foreach (bc; myblk.bc) {
+            foreach (gce; bc.preSpatialDerivActionAtBndryCells) {
+                auto mygce = cast(SolidGCE_SolidGhostCellFullFaceCopy)gce;
+                if (mygce) { mygce.set_up_cell_mapping_phase2(); }
+            }
+        }
+    }
+    foreach (myblk; localSolidBlocks) {
+        foreach (bc; myblk.bc) {
+            foreach (gce; bc.preSpatialDerivActionAtBndryCells) {
+                auto mygce = cast(SolidGCE_SolidGhostCellFullFaceCopy)gce;
+                if (mygce) { mygce.exchange_solid_data_phase0(); }
+            }
+        }
+    }
+    foreach (myblk; localSolidBlocks) {
+        foreach (bc; myblk.bc) {
+            foreach (gce; bc.preSpatialDerivActionAtBndryCells) {
+                auto mygce = cast(SolidGCE_SolidGhostCellFullFaceCopy)gce;
+                if (mygce) { mygce.exchange_solid_data_phase1(); }
+            }
+        }
+    }
+    foreach (myblk; localSolidBlocks) {
+        foreach (bc; myblk.bc) {
+            foreach (gce; bc.preSpatialDerivActionAtBndryCells) {
+                auto mygce = cast(SolidGCE_SolidGhostCellFullFaceCopy)gce;
+                if (mygce) { mygce.exchange_solid_data_phase2(); }
+            }
+        }
+    }
+    // Now that we know the ghost-cell locations, we can set up the least-squares subproblems for
+    // calculation of temperature gradients for the solid solver with least-squares gradients.
+    foreach (ref mySolidBlk; localSolidBlocks) {
+        mySolidBlk.setupSpatialDerivativeCalc();
+    }
+    if (localSolidBlocks.length > 0) {
+        initPropertiesAtSolidInterfaces(localSolidBlocks);
+    }
+}
 
-    // [TODO] RJG, 2024-02-07
-    // Add something similar for solid domain cells.
+/**
+ * Initialise the boundary conditions related to fluid-solid interfaces.
+ *
+ * Authors: KAD and RJG
+ * Date: 2024-03-04
+ */
+void initFluidSolidExchangeBoundaries()
+{
+    foreach (myblk; localFluidBlocks) {
+        foreach (bc; myblk.bc) {
+            foreach (gce; bc.preReconAction) {
+                auto mygce = cast(GhostCellGasSolidFullFaceCopy)gce;
+                if (mygce) { mygce.set_up_cell_mapping_phase0(); }
+            }
+        }
+    }
+    foreach (myblk; localSolidBlocks) {
+        foreach (bc; myblk.bc) {
+            foreach (gce; bc.preSpatialDerivActionAtBndryCells) {
+                auto mygce = cast(GhostCellSolidGasFullFaceCopy)gce;
+                if (mygce) { mygce.set_up_cell_mapping_phase0(); }
+            }
+        }
+    }
+    foreach (myblk; localFluidBlocks) {
+        foreach (bc; myblk.bc) {
+            foreach (gce; bc.preReconAction) {
+                auto mygce = cast(GhostCellGasSolidFullFaceCopy)gce;
+                if (mygce) { mygce.set_up_cell_mapping_phase1(); }
+            }
+        }
+    }
+    foreach (myblk; localSolidBlocks) {
+        foreach (bc; myblk.bc) {
+            foreach (gce; bc.preSpatialDerivActionAtBndryCells) {
+                auto mygce = cast(GhostCellSolidGasFullFaceCopy)gce;
+                if (mygce) { mygce.set_up_cell_mapping_phase1(); }
+            }
+        }
+    }
+    foreach (myblk; localFluidBlocks) {
+        foreach (bc; myblk.bc) {
+            foreach (gce; bc.preReconAction) {
+                auto mygce = cast(GhostCellGasSolidFullFaceCopy)gce;
+                if (mygce) { mygce.set_up_cell_mapping_phase2(); }
+            }
+        }
+    }
+    foreach (myblk; localSolidBlocks) {
+        foreach (bc; myblk.bc) {
+            foreach (gce; bc.preSpatialDerivActionAtBndryCells) {
+                auto mygce = cast(GhostCellSolidGasFullFaceCopy)gce;
+                if (mygce) { mygce.set_up_cell_mapping_phase2(); }
+            }
+        }
+    }
+    foreach (myblk; localFluidBlocks) {
+        foreach (bc; myblk.bc) {
+            foreach (gce; bc.preReconAction) {
+                auto mygce = cast(GhostCellGasSolidFullFaceCopy)gce;
+                if (mygce) { mygce.exchange_solidstate_phase0(); }
+            }
+        }
+    }
+    foreach (myblk; localSolidBlocks) {
+        foreach (bc; myblk.bc) {
+            foreach (gce; bc.preSpatialDerivActionAtBndryCells) {
+                auto mygce = cast(GhostCellSolidGasFullFaceCopy)gce;
+                if (mygce) { mygce.exchange_fluidstate_phase0(); }
+            }
+        }
+    }
+    foreach (myblk; localFluidBlocks) {
+        foreach (bc; myblk.bc) {
+            foreach (gce; bc.preReconAction) {
+                auto mygce = cast(GhostCellGasSolidFullFaceCopy)gce;
+                if (mygce) { mygce.exchange_fluidstate_phase1(); }
+            }
+        }
+    }
+    foreach (myblk; localSolidBlocks) {
+        foreach (bc; myblk.bc) {
+            foreach (gce; bc.preSpatialDerivActionAtBndryCells) {
+                auto mygce = cast(GhostCellSolidGasFullFaceCopy)gce;
+                if (mygce) { mygce.exchange_solidstate_phase1(); }
+            }
+        }
+    }
+    foreach (myblk; localFluidBlocks) {
+        foreach (bc; myblk.bc) {
+            foreach (gce; bc.preReconAction) {
+                auto mygce = cast(GhostCellGasSolidFullFaceCopy)gce;
+                if (mygce) { mygce.exchange_solidstate_phase2(); }
+            }
+        }
+    }
+    foreach (myblk; localSolidBlocks) {
+        foreach (bc; myblk.bc) {
+            foreach (gce; bc.preSpatialDerivActionAtBndryCells) {
+                auto mygce = cast(GhostCellSolidGasFullFaceCopy)gce;
+                if (mygce) { mygce.exchange_fluidstate_phase2(); }
+            }
+        }
+    }
+}
 
+/**
+ * Initialise the loads writing infrastructure.
+ *
+ * Authors: RJG
+ * Date: 2024-03-11
+ */
+void initLoadsFiles()
+{
+    ensure_directory_is_present(lmrCfg.loadsDir);
+    init_loads_metadata_file();
 }
