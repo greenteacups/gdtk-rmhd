@@ -190,6 +190,7 @@ BC_FILES := bc/package.d \
 	bc/ghost_cell_effect/fixed_pt.d \
 	bc/ghost_cell_effect/from_stagnation.d \
 	bc/ghost_cell_effect/full_face_copy.d \
+	bc/ghost_cell_effect/full_face_copy_bfield.d \
 	bc/ghost_cell_effect/mapped_cell_copy.d \
 	bc/ghost_cell_effect/gas_solid_full_face_copy.d \
 	bc/user_defined_effects.d \

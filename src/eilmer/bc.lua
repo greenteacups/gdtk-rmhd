@@ -197,7 +197,29 @@ function FullFaceCopy:tojson()
    str = str .. '}' -- end of JSON value
    return str
 end
-MappedCellCopy = GhostCellEffect:new{cell_mapping_from_file=false, fileName='mapped_cells', symmetric_mapping=false,
+
+FullFaceCopyBField = GhostCellEffect:new{otherBlock=nil, otherFace=nil, orientation=-1,
+                                   reorient_vector_quantities=false,
+                                   Rmatrix={1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0}}
+FullFaceCopyBField.type = "full_face_copy_bfield"
+function FullFaceCopyBField:tojson()
+   local str = string.format('          {"type": "%s", ', self.type)
+   str = str .. string.format('"other_block": %d, ', self.otherBlock)
+   str = str .. string.format('"other_face": "%s", ', self.otherFace)
+   str = str .. string.format('"orientation": %d, ', self.orientation)
+   str = str .. string.format('"reorient_vector_quantities": %s, ',
+			      tostring(self.reorient_vector_quantities))
+   str = str .. string.format('"Rmatrix": [')
+   for i,v in ipairs(self.Rmatrix) do
+      str = str .. string.format('%.18e', v)
+      if i < #self.Rmatrix then str = str .. ', ' end
+   end
+   str = str .. ']' -- end of Rmatrix
+   str = str .. '}' -- end of JSON value
+   return str
+end
+
+MappedCellCopy = GhostCellEffect:new{cell_mapping_from_file=false, fileName='mapped_cells',
                                      transform_position=false,
                                      c0=Vector3:new{x=0.0,y=0.0,z=0.0},
                                      n=Vector3:new{x=0.0,y=0.0,z=1.0},

@@ -158,6 +158,19 @@ GhostCellEffect make_GCE_from_json(JSONValue jsonData, int blk_id, int boundary)
                                            neighbourOrientation,
                                            rvq, Rmatrix);
         break;
+    case "full_face_copy_bfield":
+    case "full_face_exchange_copy_bfield": // old name is also allowed
+        int otherBlock = getJSONint(jsonData, "other_block", -1);
+        string otherFaceName = getJSONstring(jsonData, "other_face", "none");
+        int neighbourOrientation = getJSONint(jsonData, "orientation", 0);
+        bool rvq = getJSONbool(jsonData, "reorient_vector_quantities", false);
+        double[] Rmatrix = getJSONdoublearray(jsonData, "Rmatrix",
+                                              [1.0,0.0,0.0,0.0,1.0,0.0,0.0,0.0,1.0]);
+        newGCE = new GhostCellFullFaceCopyBField(blk_id, boundary,
+                                           otherBlock, face_index(otherFaceName),
+                                           neighbourOrientation,
+                                           rvq, Rmatrix);
+        break;
     case "mapped_cell_copy":
     case "mapped_cell_exchange_copy": // old name is also allowed
         bool cmff = getJSONbool(jsonData, "cell_mapping_from_file", false);

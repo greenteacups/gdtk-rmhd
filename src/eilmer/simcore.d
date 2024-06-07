@@ -381,6 +381,39 @@ int init_simulation(int tindx, int nextLoadsIndx,
             } // end foreach (gce;
         } // end foreach (j, bc;
     } // end foreach (my_blk;
+
+    // First, check that full-face exchange boundaries are paired correctly.
+    foreach (my_blk; localFluidBlocks) {
+        foreach (j, bc; my_blk.bc) {
+            foreach (gce; bc.preReconAction) {
+                auto my_gce = cast(GhostCellFullFaceCopyBField)gce;
+                if (my_gce) {
+                    // The local block thinks that it has an exchange boundary with another block,
+                    // so we need to check the ghost-cell effects of the other block's face to see
+                    // that it points back to the local block face.
+                    auto other_blk = my_gce.neighbourBlock;
+                    bool ok = false;
+                    auto other_blk_bc = other_blk.bc[my_gce.neighbourFace];
+                    foreach (gce2; other_blk_bc.preReconAction) {
+                        auto other_gce = cast(GhostCellFullFaceCopyBField)gce2;
+                        if (other_gce &&
+                            (other_gce.neighbourBlock.id == my_blk.id) &&
+                            (other_gce.neighbourFace == j)) {
+                            ok = true;
+                        }
+                    }
+                    if (!ok) {
+                        string msg = format("FullFaceCopyBField for local blk_id=%d face=%d", my_blk.id, j);
+                        msg ~= format(" is not correctly paired with other block id=%d face=%d.",
+                                      other_blk.id, my_gce.neighbourFace);
+                        writeln(msg);
+                        any_block_fail = true;
+                    }
+                } // end if (my_copy_gce)
+            } // end foreach (gce;
+        } // end foreach (j, bc;
+    } // end foreach (my_blk;
+
     version(mpi_parallel) {
         myFlag = to!int(any_block_fail);
         MPI_Allreduce(MPI_IN_PLACE, &myFlag, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
@@ -407,6 +440,8 @@ int init_simulation(int tindx, int nextLoadsIndx,
             foreach (gce; bc.preReconAction) {
                 auto mygce = cast(GhostCellFullFaceCopy)gce;
                 if (mygce && (mygce.check_cell_mapping() != 0)) { any_block_fail = true; }
+                auto mygce3 = cast(GhostCellFullFaceCopyBField)gce;
+                if (mygce3 && (mygce3.check_cell_mapping() != 0)) { any_block_fail = true; }
             }
         }
     }
@@ -421,6 +456,8 @@ int init_simulation(int tindx, int nextLoadsIndx,
             foreach (gce; bc.preReconAction) {
                 auto mygce = cast(GhostCellFullFaceCopy)gce;
                 if (mygce) { mygce.set_up_cell_mapping_phase0(); }
+                auto mygce3 = cast(GhostCellFullFaceCopyBField)gce;
+                if (mygce3) { mygce3.set_up_cell_mapping_phase0(); }
             }
         }
     }
@@ -429,6 +466,8 @@ int init_simulation(int tindx, int nextLoadsIndx,
             foreach (gce; bc.preReconAction) {
                 auto mygce = cast(GhostCellFullFaceCopy)gce;
                 if (mygce) { mygce.set_up_cell_mapping_phase1(); }
+                auto mygce3 = cast(GhostCellFullFaceCopyBField)gce;
+                if (mygce3) { mygce3.set_up_cell_mapping_phase1(); }
             }
         }
     }
@@ -437,6 +476,8 @@ int init_simulation(int tindx, int nextLoadsIndx,
             foreach (gce; bc.preReconAction) {
                 auto mygce = cast(GhostCellFullFaceCopy)gce;
                 if (mygce) { mygce.set_up_cell_mapping_phase2(); }
+                auto mygce3 = cast(GhostCellFullFaceCopyBField)gce;
+                if (mygce3) { mygce3.set_up_cell_mapping_phase2(); }
             }
         }
     }
