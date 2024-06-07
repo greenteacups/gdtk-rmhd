@@ -1952,7 +1952,7 @@ void hlle3(in FlowState Lft, in FlowState Rght, ref FVInterface IFace, ref Local
     number uL = Lft.vel.x;
     number vL = Lft.vel.y;
     number wL = Lft.vel.z;
-    version(MHD) {
+    version(MHD) { // Field terms are scaled by 1/sqrt(mu0) to solve equations to Tesla
         number BxL = Lft.B.x *1/sqrt(mu0);
         number ByL = Lft.B.y *1/sqrt(mu0);
         number BzL = Lft.B.z *1/sqrt(mu0);
@@ -1992,9 +1992,7 @@ void hlle3(in FlowState Lft, in FlowState Rght, ref FVInterface IFace, ref Local
         number By  = 0.5*(ByL+ByR);
         number Bz  = 0.5*(BzL+BzR);
     }
-    //if(SimState.time < 10.0e-4) {Bx = 0.0; By = 0.0; BxL = 0.0; ByL = 0.0; BxR = 0.0; ByR = 0.0;}
-    //if(IFace.pos.y > 6.35 || IFace.pos.y < -6.35) {By = 0.0; ByR = 0.0; ByL = 0.0;}
-    //
+
     // Compute Eigenvalues of Roe Matrix
     //u2=u*u;
     //v2=v*v;
@@ -2101,43 +2099,10 @@ void hlle3(in FlowState Lft, in FlowState Rght, ref FVInterface IFace, ref Local
         number fByR = uR*ByR - vR*BxR;
         number fBzL = uL*BzL - wL*BxL;
         number fBzR = uR*BzR - wR*BxR;
-        Bx2 = Bx*Bx;
-        Bt2 = By*By + Bz*Bz;
-        BB = Bx2 + Bt2;
-        BxL2 = BxL*BxL;
-        BtL2 = ByL*ByL + BzL*BzL;
-        BBL = BxL2 + BtL2;
-        BxR2 = BxR*BxR;
-        BtR2 = ByR*ByR + BzR*BzR;
-        BBR = BxR2 + BtR2;
-        caR2 = BxR2/rR;
-        ca2 = Bx2/rho;
-        caL2 = BxL2/rL;
-        alfR = aR2+BBR/rR;
-        alsR = SAFESQRT(alfR*alfR-4.0*aR2*caR2);
-        alf = a2+BB/rho;
-        als = SAFESQRT(alf*alf-4.0*a2*ca2);
-        alfL = aL2+BBL/rL;
-        alsL = SAFESQRT(alfL*alfL-4.0*aL2*caL2);
-        cfR2 = 0.5*(alfR+alsR);
-        cfL2 = 0.5*(alfL+alsL);
-        cf2 = 0.5*(alf+als);
-        cfR = sqrt(cfR2);
-        cf = sqrt(cf2);
-        cfL = sqrt(cfL2);
-        wpR = uR+cfR;
-        wp = u+cf;
-        wmL = uL-cfL;
-        wm = u-cf;
-        br = fmax(wpR, wp);
-        bl = fmin(wmL, wm);
-        brp = fmax(br, 0.0);
-        blm = fmin(bl, 0.0);
-        fac1 = brp*blm;
+
         dU[4] = BxR - BxL;
         dU[5] = ByR - ByL;
         dU[6] = BzR - BzL;
-        iden = 1.0/(brp - blm);
 
         if (cqi.MHD) {
             F[cqi.xB] += factor*((brp*fBxL - blm*fBxR + fac1*dU[4])*iden);
