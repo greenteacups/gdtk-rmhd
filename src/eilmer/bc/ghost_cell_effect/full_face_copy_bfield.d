@@ -1903,10 +1903,6 @@ public:
                 //ghost_cells[i].fs.copy_values_from(mapped_cells[i].fs);
 
                 ghost_cells[i].fs.B = mapped_cells[i].fs.B;
-                //ghost_cells[i].fs.B.y = 1000000;
-                //[i].fs.B.x = 1000000;
-                //printf("after = %f \n", ghost_cells[i].fs.B.x);
-                //printf("HIII");
             }
         }
         // Done with copying from source cells.

@@ -607,7 +607,6 @@ public:
         version(MHD) {
             mixin(codeForGradients("B.x", "B[0]"));
             mixin(codeForGradients("B.y", "B[1]"));
-            //printf("test = %f\n", cloud_fs[0].vel.x);
             if (dimensions == 3) {
                 mixin(codeForGradients("B.z", "B[2]"));
             } else {
