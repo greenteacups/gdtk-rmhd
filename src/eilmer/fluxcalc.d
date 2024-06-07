@@ -1953,9 +1953,9 @@ void hlle3(in FlowState Lft, in FlowState Rght, ref FVInterface IFace, ref Local
     number vL = Lft.vel.y;
     number wL = Lft.vel.z;
     version(MHD) {
-        number BxL = Lft.B.x;
-        number ByL = Lft.B.y;
-        number BzL = Lft.B.z;
+        number BxL = Lft.B.x *1/sqrt(mu0);
+        number ByL = Lft.B.y *1/sqrt(mu0);
+        number BzL = Lft.B.z *1/sqrt(mu0);
     }
     number rR = Rght.gas.rho;
     number pR = Rght.gas.p;
@@ -1963,9 +1963,9 @@ void hlle3(in FlowState Lft, in FlowState Rght, ref FVInterface IFace, ref Local
     number vR = Rght.vel.y;
     number wR = Rght.vel.z;
     version(MHD) {
-        number BxR = Rght.B.x;
-        number ByR = Rght.B.y;
-        number BzR = Rght.B.z;
+        number BxR = Rght.B.x *1/sqrt(mu0);
+        number ByR = Rght.B.y *1/sqrt(mu0);
+        number BzR = Rght.B.z *1/sqrt(mu0);
     }
     //
     // Derive the gas "constants" from the local conditions.
@@ -2043,29 +2043,6 @@ void hlle3(in FlowState Lft, in FlowState Rght, ref FVInterface IFace, ref Local
         number wpR = uR+cfR;
         //wmR = uR-cfR;
 
-        number caL2_2 = 1/mu0 * BxL2/rL;
-        number ca2_2 = 1/mu0 * Bx2/rho;
-        number caR2_2 = 1/mu0 * BxR2/rR;
-
-        number alfL_2 = aL2+ 1/mu0 * BBL/rL;
-        number alsL_2 = SAFESQRT(alfL_2*alfL_2-4.0*aL2*caL2_2);
-        number alf_2 = a2+ 1/mu0 * BB/rho;
-        number als_2 = SAFESQRT(alf_2*alf_2-4.0*a2*ca2_2);
-        number alfR_2 = aR2+ 1/mu0 * BBR/rR;
-        number alsR_2 = SAFESQRT(alfR_2*alfR_2-4.0*aR2*caR2_2);
-
-        number cfL2_2 = 0.5*(alfL_2+alsL_2);
-        number cfL_2 = sqrt(cfL2_2);
-        number cf2_2 = 0.5*(alf_2+als_2);
-        number cf_2 = sqrt(cf2_2);
-        number cfR2_2 = 0.5*(alfR_2+alsR_2);
-        number cfR_2 = sqrt(cfR2_2);
-
-        number wmL_2 = uL-cfL_2;
-        number wm_2 = u-cf_2;
-        number wpR_2 = uR+cfR_2;
-        number wp_2 = u+cf_2;
-
         number[8] dU;
         dU[0] = rR - rL;
         dU[1] = rR*uR - rL*uL;
@@ -2074,43 +2051,28 @@ void hlle3(in FlowState Lft, in FlowState Rght, ref FVInterface IFace, ref Local
         dU[4] = BxR - BxL;
         dU[5] = ByR - ByL;
         dU[6] = BzR - BzL;
-        dU[7] = (pR - pL)/(gam-1.0) + 0.5*(rR*uuR+ 1/mu0 * BBR) - 0.5*(rL*uuL+ 1/mu0 * BBL);
+        dU[7] = (pR - pL)/(gam-1.0) + 0.5*(rR*uuR+ BBR) - 0.5*(rL*uuL+ BBL);
         //
         number bl = fmin(wmL, wm);
         number br = fmax(wpR, wp);
         number blm = fmin(bl, 0.0);
         number brp = fmax(br, 0.0);
 
-        number bl_2 = fmin(wmL_2, wm_2);
-        number br_2 = fmax(wpR_2, wp_2);
-        number blm_2 = fmin(bl_2, 0.0);
-        number brp_2 = fmax(br_2, 0.0);
-
         number fmassL = rL*uL;
         number fmassR = rR*uR;
 
-        number fmomxL = rL*uL2 - 1/mu0 * BxL2 + ptL;
-        number fmomxR = rR*uR2 - 1/mu0 * BxR2 + ptR;
-        number fmomyL = rL*uL*vL - 1/mu0 * BxL*ByL;
-        number fmomyR = rR*uR*vR - 1/mu0 * BxR*ByR;
-        number fmomzL = rL*uL*wL - 1/mu0 * BxL*BzL;
-        number fmomzR = rR*uR*wR - 1/mu0 * BxR*BzR;
+        number fmomxL = rL*uL2 - BxL2 + ptL;
+        number fmomxR = rR*uR2 - BxR2 + ptR;
+        number fmomyL = rL*uL*vL - BxL*ByL;
+        number fmomyR = rR*uR*vR - BxR*ByR;
+        number fmomzL = rL*uL*wL - BxL*BzL;
+        number fmomzR = rR*uR*wR - BxR*BzR;
 
-        number fBxL = 0.0;
-        number fBxR = 0.0;
-        number fByL = uL*ByL - vL*BxL;
-        number fByR = uR*ByR - vR*BxR;
-        number fBzL = uL*BzL - wL*BxL;
-        number fBzR = uR*BzR - wR*BxR;
-
-        number fenergyL = (pL/(gam-1.0)+0.5*(rL*uuL+ 1/mu0 * BBL)+ptL)*uL - 1/mu0 * (uL*BxL+vL*ByL+wL*BzL)*BxL;
-        number fenergyR = (pR/(gam-1.0)+0.5*(rR*uuR+ 1/mu0 * BBR)+ptR)*uR - 1/mu0 * (uR*BxR+vR*ByR+wR*BzR)*BxR;
+        number fenergyL = (pL/(gam-1.0)+0.5*(rL*uuL+ BBL)+ptL)*uL - (uL*BxL+vL*ByL+wL*BzL)*BxL;
+        number fenergyR = (pR/(gam-1.0)+0.5*(rR*uuR+ BBR)+ptR)*uR - (uR*BxR+vR*ByR+wR*BzR)*BxR;
 
         number iden = 1.0/(brp - blm);
         number fac1 = brp*blm;
-
-        number iden_2 = 1.0/(brp_2 - blm_2);
-        number fac1_2 = brp_2*blm_2;
         //
         ConservedQuantities F = IFace.F;
         auto cqi = myConfig.cqi;
@@ -2123,6 +2085,59 @@ void hlle3(in FlowState Lft, in FlowState Rght, ref FVInterface IFace, ref Local
         if (cqi.threeD) { F[cqi.zMom] += factor*((brp*fmomzL - blm*fmomzR + fac1*dU[3])*iden); }
 
         F[cqi.totEnergy] += factor*(brp*fenergyL - blm*fenergyR + fac1*dU[7])*iden;
+
+        BxL = Lft.B.x;
+        ByL = Lft.B.y;
+        BzL = Lft.B.z;
+        BxR = Rght.B.x;
+        ByR = Rght.B.y;
+        BzR = Rght.B.z;
+        Bx  = 0.5*(BxL+BxR);
+        By  = 0.5*(ByL+ByR);
+        Bz  = 0.5*(BzL+BzR);
+        number fBxL = 0.0;
+        number fBxR = 0.0;
+        number fByL = uL*ByL - vL*BxL;
+        number fByR = uR*ByR - vR*BxR;
+        number fBzL = uL*BzL - wL*BxL;
+        number fBzR = uR*BzR - wR*BxR;
+        Bx2 = Bx*Bx;
+        Bt2 = By*By + Bz*Bz;
+        BB = Bx2 + Bt2;
+        BxL2 = BxL*BxL;
+        BtL2 = ByL*ByL + BzL*BzL;
+        BBL = BxL2 + BtL2;
+        BxR2 = BxR*BxR;
+        BtR2 = ByR*ByR + BzR*BzR;
+        BBR = BxR2 + BtR2;
+        caR2 = BxR2/rR;
+        ca2 = Bx2/rho;
+        caL2 = BxL2/rL;
+        alfR = aR2+BBR/rR;
+        alsR = SAFESQRT(alfR*alfR-4.0*aR2*caR2);
+        alf = a2+BB/rho;
+        als = SAFESQRT(alf*alf-4.0*a2*ca2);
+        alfL = aL2+BBL/rL;
+        alsL = SAFESQRT(alfL*alfL-4.0*aL2*caL2);
+        cfR2 = 0.5*(alfR+alsR);
+        cfL2 = 0.5*(alfL+alsL);
+        cf2 = 0.5*(alf+als);
+        cfR = sqrt(cfR2);
+        cf = sqrt(cf2);
+        cfL = sqrt(cfL2);
+        wpR = uR+cfR;
+        wp = u+cf;
+        wmL = uL-cfL;
+        wm = u-cf;
+        br = fmax(wpR, wp);
+        bl = fmin(wmL, wm);
+        brp = fmax(br, 0.0);
+        blm = fmin(bl, 0.0);
+        fac1 = brp*blm;
+        dU[4] = BxR - BxL;
+        dU[5] = ByR - ByL;
+        dU[6] = BzR - BzL;
+        iden = 1.0/(brp - blm);
 
         if (cqi.MHD) {
             F[cqi.xB] += factor*((brp*fBxL - blm*fBxR + fac1*dU[4])*iden);
