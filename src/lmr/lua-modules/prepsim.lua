@@ -67,7 +67,6 @@ write_config_file = output.write_config_file
 write_times_file = output.write_times_file
 write_block_list_file = output.write_block_list_file
 write_mpimap_file = output.write_mpimap_file
-write_fluidBlockArrays_file = output.write_fluidBlockArrays_file
 
 local prep_check = require 'prep_check'
 initTurbulence = prep_check.initTurbulence
@@ -188,7 +187,12 @@ function makeFluidBlocks(bcDict, flowDict)
       local ifs
       if g.fsTag then ifs = flowDict[g.fsTag] end
       if not ifs then
-         error(string.format("Grid.id=%d fsTag=%s, does not seem to have a valid initial FlowState.", g.id, g.fsTag))
+         local msg = string.format("Grid.id=%d fsTag=%s, does not have a valid initial FlowState.\n", g.id, g.fsTag)
+         msg = msg .. "Keys in flowDict are: "
+         for k,v in pairs(flowDict) do
+            msg = msg .. string.format(" %s", k)
+         end
+         error(msg)
       end
       if g.type == "structured_grid" then
          -- Build the bc list for this block,
@@ -201,7 +205,12 @@ function makeFluidBlocks(bcDict, flowDict)
                if bc then
                   bcs[face] = bc
                else
-                  print("WARNING: there is no bcDict entry for user-supplied tag:", tag)
+                  print(string.format("WARNING: For Grid.id=%d face=%s there is no bcDict entry for bc tag=%s", g.id, face, tag))
+                  local msg = "    Keys in bcDict are:"
+                  for k,v in pairs(bcDict) do
+                     msg = msg .. string.format(" %s", k)
+                  end
+                  print(msg)
                end
             end
          end
@@ -359,12 +368,11 @@ function buildRuntimeConfigFiles()
    end
    write_block_list_file(lmrconfig.blockListFilename())
    write_mpimap_file(lmrconfig.mpimapFilename())
-   write_fluidBlockArrays_file(cfgDir .. "/" .. lmrCfg["fluid-block-arrays-filename"])
    if (config.solver_mode == "steady") then
       nkconfig.setIgnoreFlagInPhases(nkPhases)
       nkconfig.writeNKConfigToFile(NewtonKrylovGlobalConfig, nkPhases, lmrconfig.nkConfigFilename())
    end
-
+   --
    if false then -- debug
       print("Done buildRuntimeConfigFiles.")
    end
