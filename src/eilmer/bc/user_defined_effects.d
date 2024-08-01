@@ -230,6 +230,12 @@ private:
                 ghostCell.fs.turb[it] = getNumberFromTable(L, -1, tname, false, 0.0);
             }
         }
+
+        version(MHD) {
+            ghostCell.fs.B.x = getNumberFromTable(L, tblIdx, "Bx", false, 0.0);
+            ghostCell.fs.B.y = getNumberFromTable(L, tblIdx, "By", false, 0.0);
+            ghostCell.fs.B.z = getNumberFromTable(L, tblIdx, "Bz", false, 0.0);
+        }
         warnOnStackChange(L, old_top);
     } // end putFlowStateIntoGhostCell()
 
@@ -495,6 +501,26 @@ private:
                 string tname = blk.myConfig.turb_model.primitive_variable_name(it);
                 fs.turb[it] = getNumberFromTable(L, -1, tname, false, 0.0);
             }
+        }
+
+        version(MHD) {
+            lua_getfield(L, tblIdx, "Bx");
+            if ( !lua_isnil(L, -1) ) {
+                fs.B.x = getDouble(L, tblIdx, "Bx");
+            }
+            lua_pop(L, 1);
+
+            lua_getfield(L, tblIdx, "By");
+            if ( !lua_isnil(L, -1) ) {
+                fs.B.y = getDouble(L, tblIdx, "By");
+            }
+            lua_pop(L, 1);
+
+            lua_getfield(L, tblIdx, "Bz");
+            if ( !lua_isnil(L, -1) ) {
+                fs.B.z = getDouble(L, tblIdx, "Bz");
+            }
+            lua_pop(L, 1);
         }
 
         lua_getfield(L, tblIdx, "mu_t");
