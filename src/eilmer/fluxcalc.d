@@ -1953,9 +1953,9 @@ void hlle3(in FlowState Lft, in FlowState Rght, ref FVInterface IFace, ref Local
     number vL = Lft.vel.y;
     number wL = Lft.vel.z;
     version(MHD) { // Field terms are scaled by 1/sqrt(mu0) to solve equations to Tesla
-        number BxL = Lft.B.x *1/sqrt(mu0);
-        number ByL = Lft.B.y *1/sqrt(mu0);
-        number BzL = Lft.B.z *1/sqrt(mu0);
+        number BxL = Lft.B.x;
+        number ByL = Lft.B.y;
+        number BzL = Lft.B.z;
     }
     number rR = Rght.gas.rho;
     number pR = Rght.gas.p;
@@ -1963,9 +1963,9 @@ void hlle3(in FlowState Lft, in FlowState Rght, ref FVInterface IFace, ref Local
     number vR = Rght.vel.y;
     number wR = Rght.vel.z;
     version(MHD) {
-        number BxR = Rght.B.x *1/sqrt(mu0);
-        number ByR = Rght.B.y *1/sqrt(mu0);
-        number BzR = Rght.B.z *1/sqrt(mu0);
+        number BxR = Rght.B.x;
+        number ByR = Rght.B.y;
+        number BzR = Rght.B.z;
     }
     //
     // Derive the gas "constants" from the local conditions.
@@ -2015,7 +2015,7 @@ void hlle3(in FlowState Lft, in FlowState Rght, ref FVInterface IFace, ref Local
         number BxL2 = BxL*BxL;
         number BtL2 = ByL*ByL + BzL*BzL;
         number BBL = BxL2 + BtL2;
-        number ptL = pL + 0.5*BBL;
+        number ptL = pL + 1/mu0*0.5*BBL;
         number uL2 = uL*uL;
         number uuL = uL2 + vL*vL + wL*wL;
         number aL2 = gam*pL/rL;
@@ -2029,7 +2029,7 @@ void hlle3(in FlowState Lft, in FlowState Rght, ref FVInterface IFace, ref Local
         number BxR2 = BxR*BxR;
         number BtR2 = ByR*ByR + BzR*BzR;
         number BBR = BxR2 + BtR2;
-        number ptR = pR + 0.5*BBR;
+        number ptR = pR + 1/mu0*0.5*BBR;
         number uR2 = uR*uR;
         number uuR = uR2 + vR*vR + wR*wR;
         number aR2 = gam*pR/rR;
@@ -2059,15 +2059,15 @@ void hlle3(in FlowState Lft, in FlowState Rght, ref FVInterface IFace, ref Local
         number fmassL = rL*uL;
         number fmassR = rR*uR;
 
-        number fmomxL = rL*uL2 - BxL2 + ptL;
-        number fmomxR = rR*uR2 - BxR2 + ptR;
-        number fmomyL = rL*uL*vL - BxL*ByL;
-        number fmomyR = rR*uR*vR - BxR*ByR;
-        number fmomzL = rL*uL*wL - BxL*BzL;
-        number fmomzR = rR*uR*wR - BxR*BzR;
+        number fmomxL = rL*uL2 - 1/mu0*BxL2 + ptL;
+        number fmomxR = rR*uR2 - 1/mu0*BxR2 + ptR;
+        number fmomyL = rL*uL*vL - 1/mu0*BxL*ByL;
+        number fmomyR = rR*uR*vR - 1/mu0*BxR*ByR;
+        number fmomzL = rL*uL*wL - 1/mu0*BxL*BzL;
+        number fmomzR = rR*uR*wR - 1/mu0*BxR*BzR;
 
-        number fenergyL = (pL/(gam-1.0)+0.5*(rL*uuL+ BBL)+ptL)*uL - (uL*BxL+vL*ByL+wL*BzL)*BxL;
-        number fenergyR = (pR/(gam-1.0)+0.5*(rR*uuR+ BBR)+ptR)*uR - (uR*BxR+vR*ByR+wR*BzR)*BxR;
+        number fenergyL = (pL/(gam-1.0)+0.5*(rL*uuL+ 1/mu0*BBL)+ptL)*uL - 1/mu0*(uL*BxL+vL*ByL+wL*BzL)*BxL;
+        number fenergyR = (pR/(gam-1.0)+0.5*(rR*uuR+ 1/mu0*BBR)+ptR)*uR - 1/mu0*(uR*BxR+vR*ByR+wR*BzR)*BxR;
 
         number iden = 1.0/(brp - blm);
         number fac1 = brp*blm;
