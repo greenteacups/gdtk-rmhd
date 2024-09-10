@@ -2003,8 +2003,8 @@ void hlle3(in FlowState Lft, in FlowState Rght, ref FVInterface IFace, ref Local
         number Bx2 = Bx*Bx;
         number Bt2 = By*By + Bz*Bz;
         number BB = Bx2 + Bt2;
-        number ca2 = Bx2/rho;
-        number alf = a2+BB/rho;
+        number ca2 = 1/mu0*Bx2/rho;
+        number alf = a2+1/mu0*BB/rho;
         number als = SAFESQRT(alf*alf-4.0*a2*ca2);
         number cf2 = 0.5*(alf+als);
         number cf = sqrt(cf2);
@@ -2019,8 +2019,8 @@ void hlle3(in FlowState Lft, in FlowState Rght, ref FVInterface IFace, ref Local
         number uL2 = uL*uL;
         number uuL = uL2 + vL*vL + wL*wL;
         number aL2 = gam*pL/rL;
-        number caL2 = BxL2/rL;
-        number alfL = aL2+BBL/rL;
+        number caL2 = 1/mu0*BxL2/rL;
+        number alfL = aL2+1/mu0*BBL/rL;
         number alsL = SAFESQRT(alfL*alfL-4.0*aL2*caL2);
         number cfL2 = 0.5*(alfL+alsL);
         number cfL = sqrt(cfL2);
@@ -2033,8 +2033,8 @@ void hlle3(in FlowState Lft, in FlowState Rght, ref FVInterface IFace, ref Local
         number uR2 = uR*uR;
         number uuR = uR2 + vR*vR + wR*wR;
         number aR2 = gam*pR/rR;
-        number caR2 = BxR2/rR;
-        number alfR = aR2+BBR/rR;
+        number caR2 = 1/mu0*BxR2/rR;
+        number alfR = aR2+1/mu0*BBR/rR;
         number alsR = SAFESQRT(alfR*alfR-4.0*aR2*caR2);
         number cfR2 = 0.5*(alfR+alsR);
         number cfR = sqrt(cfR2);
