@@ -143,8 +143,8 @@ public:
                     //}
 
                     // Temporary BCs for Hartmann Flow Problem:
-                    if(dest_cell.pos[0].y > 0.5){ f.fs.vel.x = 1.0; dest_cell.fs.vel.x = 1.0; f.fs.B.x = 0.0; dest_cell.fs.B.x = 0.0;}
-                    if(dest_cell.pos[0].y < 0.5){ f.fs.vel.x = -1.0; dest_cell.fs.vel.x = -1.0; f.fs.B.x = 0.0; dest_cell.fs.B.x = 0.0;}
+                    //if(dest_cell.pos[0].y > 0.5){ f.fs.vel.x = 1.0; dest_cell.fs.vel.x = 1.0; f.fs.B.x = 0.0; dest_cell.fs.B.x = 0.0;}
+                    //if(dest_cell.pos[0].y < 0.5){ f.fs.vel.x = -1.0; dest_cell.fs.vel.x = -1.0; f.fs.B.x = 0.0; dest_cell.fs.B.x = 0.0;}
                 }
             }
         }
