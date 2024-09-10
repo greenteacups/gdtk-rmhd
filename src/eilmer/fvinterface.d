@@ -797,22 +797,22 @@ public:
             // [TODO] As per Jason's recommendation, we need to do something
             // to correct for corner cells.
             // [TODO] Currently implemented for 2D; need to extend to 3D.
-            //F[cqi.xMom] -= tau_xx*nx + tau_wall_x;
-            //F[cqi.yMom] -= tau_yy*ny + tau_wall_y;
+            F[cqi.xMom] -= tau_xx*nx + tau_wall_x;
+            F[cqi.yMom] -= tau_yy*ny + tau_wall_y;
             if (cqi.threeD) { F[cqi.zMom] -= tau_zz*nz + tau_wall_z; }
-            //F[cqi.totEnergy] -=
-            //    tau_xx*fs.vel.x*nx + tau_yy*fs.vel.y*ny + tau_zz*fs.vel.z*nz +
-            //    tau_wall_x*fs.vel.x + tau_wall_y*fs.vel.y + tau_wall_z*fs.vel.z + q;
+            F[cqi.totEnergy] -=
+                tau_xx*fs.vel.x*nx + tau_yy*fs.vel.y*ny + tau_zz*fs.vel.z*nz +
+                tau_wall_x*fs.vel.x + tau_wall_y*fs.vel.y + tau_wall_z*fs.vel.z + q;
         }
         else { // proceed with locally computed shear and heat flux
             // Mass flux -- NO CONTRIBUTION, unless there's diffusion (below)
-            //F[cqi.xMom] -= tau_xx*nx + tau_xy*ny + tau_xz*nz;
-            //F[cqi.yMom] -= tau_xy*nx + tau_yy*ny + tau_yz*nz;
+            F[cqi.xMom] -= tau_xx*nx + tau_xy*ny + tau_xz*nz;
+            F[cqi.yMom] -= tau_xy*nx + tau_yy*ny + tau_yz*nz;
             if (cqi.threeD) { F[cqi.zMom] -= tau_xz*nx + tau_yz*ny + tau_zz*nz; }
-            //F[cqi.totEnergy] -=
-            //    (tau_xx*fs.vel.x + tau_xy*fs.vel.y + tau_xz*fs.vel.z + qx)*nx +
-            //    (tau_xy*fs.vel.x + tau_yy*fs.vel.y + tau_yz*fs.vel.z + qy)*ny +
-            //    (tau_xz*fs.vel.x + tau_yz*fs.vel.y + tau_zz*fs.vel.z + qz)*nz;
+            F[cqi.totEnergy] -=
+                (tau_xx*fs.vel.x + tau_xy*fs.vel.y + tau_xz*fs.vel.z + qx)*nx +
+                (tau_xy*fs.vel.x + tau_yy*fs.vel.y + tau_yz*fs.vel.z + qy)*ny +
+                (tau_xz*fs.vel.x + tau_yz*fs.vel.y + tau_zz*fs.vel.z + qz)*nz;
         } // end if
         version(multi_T_gas) {
             foreach (imode; 0 .. n_modes) {
