@@ -98,6 +98,8 @@ configOptionsHidden = { -- hidden from user
    enforce_species_density_positivity = false,
    scale_species_after_reconstruction = true,
    unstructured_limiter = "venkat",
+   apply_unstructured_limiter_stagnation_point_filter = false,
+   apply_unstructured_limiter_min_pressure_filter = false,
    freeze_limiter_on_step = 1000000000,
    use_extended_stencil = false,
    smooth_limiter_coeff = 0.3,
@@ -107,6 +109,7 @@ configOptionsHidden = { -- hidden from user
    --
    shock_detector = "PJ",
    compression_tolerance = -0.30,
+   shock_detector_minimum_blend_value = 0.1,
    do_shock_detect = false,
    damped_outflow = false,
    strict_shock_detector = true,
@@ -131,6 +134,8 @@ configOptionsHidden = { -- hidden from user
    --
    viscous = false,
    use_viscosity_from_cells = false,
+   inviscid_least_squares_type = "unweighted_normal",
+   viscous_least_squares_type = "weighted_normal",
    spatial_deriv_calc = "least_squares",
    spatial_deriv_locn = "cells",
    include_ghost_cells_in_spatial_deriv_clouds = true,
@@ -198,7 +203,10 @@ configOptionsHidden = { -- hidden from user
    stringent_cfl = false,
    cfl_count = 10,
    fixed_time_step = false,
-   dt_plot = 1.0e-3,
+   dt_plot_value = 1.0e-3,
+   -- A schedule of dt_plot values, as requested by Hans H.
+   -- Operates like the cfl_schedule.
+   dt_plot = {},
    dt_history = 1.0e-3,
    --
    dt_loads = 1.0e-3,

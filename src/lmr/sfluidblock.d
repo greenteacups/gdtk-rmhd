@@ -624,9 +624,9 @@ public:
                     if (i>2)     facedata.stencil_idxs[fid].L2 = cell_index(i-3, j, k);
                     if (i>1)     facedata.stencil_idxs[fid].L1 = cell_index(i-2, j, k);
                     if (i>0)     facedata.stencil_idxs[fid].L0 = cell_index(i-1, j, k);
-                    if (i<niv-1) facedata.stencil_idxs[fid].R0 = cell_index(i+0, j, k);
-                    if (i<niv-2) facedata.stencil_idxs[fid].R1 = cell_index(i+1, j, k);
-                    if (i<niv-3) facedata.stencil_idxs[fid].R2 = cell_index(i+2, j, k);
+                    if (i+1<niv) facedata.stencil_idxs[fid].R0 = cell_index(i+0, j, k);
+                    if (i+2<niv) facedata.stencil_idxs[fid].R1 = cell_index(i+1, j, k);
+                    if (i+3<niv) facedata.stencil_idxs[fid].R2 = cell_index(i+2, j, k);
                 } // i loop
             } // j loop
         } // k loop
@@ -637,9 +637,9 @@ public:
                     if (j>2)     facedata.stencil_idxs[fid].L2 = cell_index(i, j-3, k);
                     if (j>1)     facedata.stencil_idxs[fid].L1 = cell_index(i, j-2, k);
                     if (j>0)     facedata.stencil_idxs[fid].L0 = cell_index(i, j-1, k);
-                    if (j<njv-1) facedata.stencil_idxs[fid].R0 = cell_index(i, j+0, k);
-                    if (j<njv-2) facedata.stencil_idxs[fid].R1 = cell_index(i, j+1, k);
-                    if (j<njv-3) facedata.stencil_idxs[fid].R2 = cell_index(i, j+2, k);
+                    if (j+1<njv) facedata.stencil_idxs[fid].R0 = cell_index(i, j+0, k);
+                    if (j+2<njv) facedata.stencil_idxs[fid].R1 = cell_index(i, j+1, k);
+                    if (j+3<njv) facedata.stencil_idxs[fid].R2 = cell_index(i, j+2, k);
                 } // j loop
             } // i loop
         } // k loop
@@ -651,9 +651,9 @@ public:
                         if (k>2)     facedata.stencil_idxs[fid].L2 = cell_index(i, j, k-3);
                         if (k>1)     facedata.stencil_idxs[fid].L1 = cell_index(i, j, k-2);
                         if (k>0)     facedata.stencil_idxs[fid].L0 = cell_index(i, j, k-1);
-                        if (k<nkv-1) facedata.stencil_idxs[fid].R0 = cell_index(i, j, k+0);
-                        if (k<nkv-2) facedata.stencil_idxs[fid].R1 = cell_index(i, j, k+1);
-                        if (k<nkv-3) facedata.stencil_idxs[fid].R2 = cell_index(i, j, k+2);
+                        if (k+1<nkv) facedata.stencil_idxs[fid].R0 = cell_index(i, j, k+0);
+                        if (k+2<nkv) facedata.stencil_idxs[fid].R1 = cell_index(i, j, k+1);
+                        if (k+3<nkv) facedata.stencil_idxs[fid].R2 = cell_index(i, j, k+2);
                     } // k loop
                 } // i loop
             } // j loop
@@ -1471,17 +1471,32 @@ public:
             final switch (myConfig.spatial_deriv_locn) {
             case SpatialDerivLocn.vertices:
                 foreach(vtx; vertices) {
-                    vtx.grad.set_up_workspace_leastsq(myConfig, vtx.cloud_pos, vtx.pos[gtl], true, *(vtx.ws_grad));
+                    if (myConfig.viscous_least_squares_type == ViscousLeastSquaresType.weighted_normal ||
+                        myConfig.viscous_least_squares_type == ViscousLeastSquaresType.unweighted_normal) {
+                        vtx.grad.set_up_workspace_leastsq_via_normal(myConfig, vtx.cloud_pos, vtx.pos[gtl], true, *(vtx.ws_grad));
+                    } else {
+                        vtx.grad.set_up_workspace_leastsq_via_qr_factorization(myConfig, vtx.cloud_pos, vtx.pos[gtl], true, *(vtx.ws_grad));
+                    }
                 }
                 break;
             case SpatialDerivLocn.faces:
                 foreach(iface; faces) {
-                    iface.grad.set_up_workspace_leastsq(myConfig, iface.cloud_pos, iface.pos, false, *(iface.ws_grad));
+                    if (myConfig.viscous_least_squares_type == ViscousLeastSquaresType.weighted_normal ||
+                        myConfig.viscous_least_squares_type == ViscousLeastSquaresType.unweighted_normal) {
+                        iface.grad.set_up_workspace_leastsq_via_normal(myConfig, iface.cloud_pos, iface.pos, false, *(iface.ws_grad));
+                    } else {
+                        iface.grad.set_up_workspace_leastsq_via_qr_factorization(myConfig, iface.cloud_pos, iface.pos, false, *(iface.ws_grad));
+                    }
                 }
                 break;
             case SpatialDerivLocn.cells:
                 foreach(cell; cells) {
-                    cell.grad.set_up_workspace_leastsq(myConfig, cell.cloud_pos, cell.pos[gtl], false, *(cell.ws_grad));
+                    if (myConfig.viscous_least_squares_type == ViscousLeastSquaresType.weighted_normal ||
+                        myConfig.viscous_least_squares_type == ViscousLeastSquaresType.unweighted_normal) {
+                        cell.grad.set_up_workspace_leastsq_via_normal(myConfig, cell.cloud_pos, cell.pos[gtl], false, *(cell.ws_grad));
+                    } else {
+                        cell.grad.set_up_workspace_leastsq_via_qr_factorization(myConfig, cell.cloud_pos, cell.pos[gtl], false, *(cell.ws_grad));
+                    }
                 }
             } // end switch
         }
@@ -2568,40 +2583,19 @@ public:
             if (myConfig.high_order_flux_calculator && f.is_on_boundary && !bc[f.bc_id].ghost_cell_data_available) {
                 throw new Error("ghost cell data missing");
             }
-            if ((myConfig.flux_calculator == FluxCalculator.asf)
-                || ((myConfig.flux_calculator == FluxCalculator.adaptive_ausmdv_asf) && (f.fs.S < ESSENTIALLY_ZERO))) {
-                // [FIX_ME] 2021-10-28 PJ changed the bitwise and to logical and.
-                // The high-order ASF flux calculator is a flux reconstruction scheme,
-                // so the expensive interpolation process can be bypassed if it's pure ASF flux.
-                // If we're using the hybrid flux calculator,
-                // we don't need the interpolation process if the 'shock' value is 0.
-                // This short-cut provides a significant speed-up for Lachlan's simulations.
-                ASF_242(f, myConfig);
-
-                // The viscous fluxes use the interface values, so despite them not being required for the convective
-                // flux calculation with the ASF method, we do need them later on. Maybe I re-fold the ASF method back
-                // into the general convective flux path, as its unlikely the method will ever be used without viscous
-                // effects?
-                if (myConfig.viscous) {
-                    one_d.interp(f, *Lft, *Rght);
-                    f.fs.copy_average_values_from(*Lft, *Rght);
-                }
-
+            // Typical code path, with interpolation for the flowstates to the left and right of the interface.
+            if (do_reconstruction && !f.in_suppress_reconstruction_zone &&
+                !(myConfig.suppress_reconstruction_at_shocks && (f.fs.S >= (1.0 - ESSENTIALLY_ZERO)))) {
+                one_d.interp(f, *Lft, *Rght);
             } else {
-                // Typical code path, with interpolation for the flowstates to the left and right of the interface.
-                if (do_reconstruction && !f.in_suppress_reconstruction_zone &&
-                    !(myConfig.suppress_reconstruction_at_shocks && (f.fs.S == (1.0 - ESSENTIALLY_ZERO)))) {
-                    one_d.interp(f, *Lft, *Rght);
-                } else {
-                    FluidFVCell cL0 = (f.left_cells.length > 0) ? f.left_cells[0] : f.right_cells[0];
-                    FluidFVCell cR0 = (f.right_cells.length > 0) ? f.right_cells[0]: f.left_cells[0];
-                    Lft.copy_values_from(cL0.fs);
-                    Rght.copy_values_from(cR0.fs);
-                }
-                f.fs.copy_average_values_from(*Lft, *Rght);
-                if (f.is_on_boundary && bc[f.bc_id].convective_flux_computed_in_bc) continue;
-                compute_interface_flux(*Lft, *Rght, f, myConfig, omegaz);
+                FluidFVCell cL0 = (f.left_cells.length > 0) ? f.left_cells[0] : f.right_cells[0];
+                FluidFVCell cR0 = (f.right_cells.length > 0) ? f.right_cells[0]: f.left_cells[0];
+                Lft.copy_values_from(cL0.fs);
+                Rght.copy_values_from(cR0.fs);
             }
+            f.fs.copy_average_values_from(*Lft, *Rght);
+            if (f.is_on_boundary && bc[f.bc_id].convective_flux_computed_in_bc) continue;
+            compute_interface_flux(*Lft, *Rght, f, myConfig, omegaz);
         }
         return;
     } // end convective_flux_phase0()

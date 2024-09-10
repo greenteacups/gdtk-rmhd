@@ -90,6 +90,9 @@ BlockIO limBlkIO;
 FVCellIO residCIO;
 BlockIO residBlkIO;
 
+FVCellIO gradCIO;
+BlockIO gradBlkIO;
+
 /*---------------------------------------------------------------------
  * Enums for preconditioners
  *---------------------------------------------------------------------
@@ -184,6 +187,7 @@ struct NKGlobalConfig {
     bool writeLoadsOnLastStep = true;
     bool writeLimiterValues = false;
     bool writeResidualValues = false;
+    bool writeGradientValues = false;
     bool writeLoads = false;
 
     void readValuesFromJSON(JSONValue jsonData)
@@ -235,6 +239,7 @@ struct NKGlobalConfig {
         writeLoadsOnLastStep = getJSONbool(jsonData, "write_loads_on_last_step", writeLoadsOnLastStep);
         writeLimiterValues = getJSONbool(jsonData, "write_limiter_values", writeLimiterValues);
         writeResidualValues = getJSONbool(jsonData, "write_residual_values", writeResidualValues);
+        writeGradientValues = getJSONbool(jsonData, "write_gradient_values", writeGradientValues);
         writeLoads = getJSONbool(jsonData, "write_loads", writeLoads);
     }
 }
@@ -259,6 +264,8 @@ struct NKPhaseConfig {
     double startCFL = 1.0;
     double maxCFL = 1000.0;
     double autoCFLExponent = 0.75;
+    double limitOnCFLIncreaseRatio = 2.0;
+    double limitOnCFLDecreaseRatio = 0.1;
 
     void readValuesFromJSON(JSONValue jsonData)
     {
@@ -279,6 +286,8 @@ struct NKPhaseConfig {
         startCFL = getJSONdouble(jsonData, "start_cfl", startCFL);
         maxCFL = getJSONdouble(jsonData, "max_cfl", maxCFL);
         autoCFLExponent = getJSONdouble(jsonData, "auto_cfl_exponent", autoCFLExponent);
+        limitOnCFLIncreaseRatio = getJSONdouble(jsonData, "limit_on_cfl_increase_ratio", limitOnCFLIncreaseRatio);
+        limitOnCFLDecreaseRatio = getJSONdouble(jsonData, "limit_on_cfl_decrease_ratio", limitOnCFLDecreaseRatio);
     }
 }
 
@@ -359,11 +368,13 @@ private:
  */
 
 class ResidualBasedAutoCFL : CFLSelector {
-    this(double p, double cfl_max, double thresholdResidualDrop)
+    this(double p, double cfl_max, double thresholdResidualDrop, double limit_on_cfl_increase_ratio, double limit_on_cfl_decrease_ratio)
     {
         mP = p;
         mMaxCFL = cfl_max;
         mThresholdResidualDrop = thresholdResidualDrop;
+        mLimitOnCFLIncreaseRatio = limit_on_cfl_increase_ratio;
+        mLimitOnCFLDecreaseRatio = limit_on_cfl_decrease_ratio;
     }
 
     @nogc
@@ -384,8 +395,8 @@ class ResidualBasedAutoCFL : CFLSelector {
     }
 
 private:
-    immutable double mLimitOnCFLIncreaseRatio = 2.0;
-    immutable double mLimitOnCFLDecreaseRatio = 0.1;
+    double mLimitOnCFLIncreaseRatio;
+    double mLimitOnCFLDecreaseRatio;
     double mP;
     double mMaxCFL;
     double mThresholdResidualDrop;
@@ -606,6 +617,14 @@ void initNewtonKrylovSimulation(int snapshotStart, int maxCPUs, int threadsPerMP
         initMLPlimiter();
     }
 
+    if ((cfg.interpolation_order > 1) &&
+        ((cfg.unstructured_limiter == UnstructuredLimiter.hvenkat) ||
+         (cfg.unstructured_limiter == UnstructuredLimiter.venkat) ||
+         (cfg.unstructured_limiter == UnstructuredLimiter.hvenkat_mlp) ||
+         (cfg.unstructured_limiter == UnstructuredLimiter.venkat_mlp))) {
+        initUSGlimiters();
+    }
+
     orderBlocksBySize();
     initMasterLuaState();
     initCornerCoordinates();
@@ -754,7 +773,7 @@ void performNewtonKrylovUpdates(int snapshotStart, double startCFL, int maxCPUs,
         }
     }
     if (nkCfg.writeLimiterValues) {
-        limCIO = new FluidFVCellLimiterIO(buildLimiterVariables());
+        limCIO = new FluidFVCellLimiterIO(buildLimiterVariables(localFluidBlocks[0].grid_type));
         if (cfg.field_format == "rawbinary")
             limBlkIO = new BinaryBlockIO(limCIO);
         else
@@ -768,6 +787,14 @@ void performNewtonKrylovUpdates(int snapshotStart, double startCFL, int maxCPUs,
         else
             residBlkIO = new GzipBlockIO(residCIO);
         residBlkIO.writeMetadataToFile(lmrCfg.residualMetadataFile);
+    }
+    if (nkCfg.writeGradientValues) {
+        gradCIO = new FluidFVCellGradientIO(buildGradientVariables(localFluidBlocks[0].grid_type));
+        if (cfg.field_format == "rawbinary")
+            gradBlkIO = new BinaryBlockIO(gradCIO);
+        else
+            gradBlkIO = new GzipBlockIO(gradCIO);
+        gradBlkIO.writeMetadataToFile(lmrCfg.gradientMetadataFile);
     }
     allocateGlobalGMRESWorkspace();
     foreach (blk; localFluidBlocks) {
@@ -849,7 +876,8 @@ void performNewtonKrylovUpdates(int snapshotStart, double startCFL, int maxCPUs,
         setPhaseSettings(currentPhase);
         if (activePhase.useAutoCFL) {
             cflSelector = new ResidualBasedAutoCFL(activePhase.autoCFLExponent, activePhase.maxCFL,
-						   activePhase.thresholdRelativeResidualForCFLGrowth);
+                                                   activePhase.thresholdRelativeResidualForCFLGrowth,
+                                                   activePhase.limitOnCFLIncreaseRatio, activePhase.limitOnCFLDecreaseRatio);
             cfl = cflSelector.nextCFL(restart.cfl, startStep, globalResidual, prevGlobalResidual, globalResidual/referenceGlobalResidual);
         }
         else { // Assume we have a global (phase-independent) schedule
@@ -895,7 +923,8 @@ void performNewtonKrylovUpdates(int snapshotStart, double startCFL, int maxCPUs,
         setPhaseSettings(0);
         if (activePhase.useAutoCFL) {
             cflSelector = new ResidualBasedAutoCFL(activePhase.autoCFLExponent, activePhase.maxCFL,
-						   activePhase.thresholdRelativeResidualForCFLGrowth);
+                                                   activePhase.thresholdRelativeResidualForCFLGrowth,
+                                                   activePhase.limitOnCFLIncreaseRatio, activePhase.limitOnCFLDecreaseRatio);
             cfl = activePhase.startCFL;
         }
         else { // Assume we have a global (phase-independent) schedule
@@ -1159,11 +1188,19 @@ void performNewtonKrylovUpdates(int snapshotStart, double startCFL, int maxCPUs,
          *---
          */
         string reasonForStop;
+        wallClockElapsed = 1.0e-3*(Clock.currTime() - wallClockStart).total!"msecs"();
         if (step == nkCfg.maxNewtonSteps) {
             finalStep = true;
             if (cfg.is_master_task) {
                 writeln("*** STOPPING: Reached maximum number of steps.");
                 reasonForStop = "STOP-REASON: maximum-steps";
+            }
+        }
+        if ((SimState.maxWallClockSeconds > 0) && (wallClockElapsed > SimState.maxWallClockSeconds)) {
+            finalStep = true;
+            if (cfg.is_master_task) {
+                writefln("*** STOPPING: Reached maximum wall-clock-time with elapsed time %s", to!string(wallClockElapsed));
+                reasonForStop = "STOP-REASON: maximum-wall-clock";
             }
         }
         if (!activePhase.ignoreStoppingCriteria) {
@@ -1188,7 +1225,6 @@ void performNewtonKrylovUpdates(int snapshotStart, double startCFL, int maxCPUs,
          * 2c. Reporting (to files and screen)
          *---
          */
-        wallClockElapsed = 1.0e-3*(Clock.currTime() - wallClockStart).total!"msecs"();
         if (((step % nkCfg.stepsBetweenDiagnostics) == 0) || (finalStep && nkCfg.writeDiagnosticsOnLastStep)) {
             writeDiagnostics(step, dt, cfl, wallClockElapsed, omega, currentPhase, residualsUpToDate);
         }
@@ -2661,9 +2697,10 @@ double determineRelaxationFactor()
         blk.omegaLocal = omega;
         size_t startIdx = 0;
         foreach (cell; blk.cells) {
+            // make a copy of the original cell flow state
+            blk.fs_save.copy_values_from(*(cell.fs));
             bool failedDecode = false;
             while (blk.omegaLocal >= minOmega) {
-                cell.U[1][] = cell.U[0][];
                 foreach (i; 0 .. nConserved) {
                     cell.U[1][i] = cell.U[0][i] + blk.omegaLocal * blk.dU[startIdx+i];
                 }
@@ -2673,8 +2710,8 @@ double determineRelaxationFactor()
                 catch (FlowSolverException e) {
                     failedDecode = true;
                 }
-                // return cell to original state
-                cell.decode_conserved(0, 0, 0.0);
+                // return cell to original flow state
+                cell.fs.copy_values_from(*(blk.fs_save));
 
                 if (failedDecode) {
                     blk.omegaLocal *= omegaReductionFactor;
@@ -3018,6 +3055,9 @@ void writeSnapshot(int step, double dt, double cfl, int currentPhase, int stepsI
         if (nkCfg.writeResidualValues) {
             writeResidualValues(nWrittenSnapshots);
         }
+        if (nkCfg.writeGradientValues) {
+            writeGradientValues(nWrittenSnapshots);
+        }
 
 	// Add restart info
 	snapshots ~= RestartInfo(nConserved);
@@ -3047,6 +3087,11 @@ void writeSnapshot(int step, double dt, double cfl, int currentPhase, int stepsI
                     toName = residualFilename(iSnap-1, blk.id);
                     rename(fromName, toName);
                 }
+                if (nkCfg.writeGradientValues) {
+                    fromName = gradientFilename(iSnap, blk.id);
+                    toName = gradientFilename(iSnap-1, blk.id);
+                    rename(fromName, toName);
+                }
             }
         }
 
@@ -3056,6 +3101,9 @@ void writeSnapshot(int step, double dt, double cfl, int currentPhase, int stepsI
         }
         if (nkCfg.writeResidualValues) {
             writeResidualValues(nkCfg.totalSnapshots);
+        }
+        if (nkCfg.writeGradientValues) {
+            writeGradientValues(nkCfg.totalSnapshots);
         }
 
 	// Shuffle the restart info
@@ -3209,6 +3257,29 @@ void writeResidualValues(int iSnap)
         cells.length = blk.cells.length;
         foreach (i, ref c; cells) c = blk.cells[i];
         residBlkIO.writeVariablesToFile(fileName, cells);
+    }
+}
+
+/**
+ * Write gradient values to disk.
+ *
+ * Authors: RJG and KAD
+ * Date: 2024-08-01
+ */
+void writeGradientValues(int iSnap)
+{
+    alias cfg = GlobalConfig;
+    if (cfg.is_master_task) {
+        writefln("    |");
+        writefln("    |-->  Writing gradient values");
+    }
+
+    foreach (blk; localFluidBlocks) {
+        auto fileName = gradientFilename(iSnap, blk.id);
+        FVCell[] cells;
+        cells.length = blk.cells.length;
+        foreach (i, ref c; cells) c = blk.cells[i];
+        gradBlkIO.writeVariablesToFile(fileName, cells);
     }
 }
 

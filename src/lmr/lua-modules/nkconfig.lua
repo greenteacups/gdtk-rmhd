@@ -69,6 +69,7 @@ NewtonKrylovGlobalConfigHidden = {
    write_loads_on_last_step = true,
    write_limiter_values = false,
    write_residual_values = false,
+   write_gradient_values = false,
    write_loads = false,
 
    __index = function (t, k)
@@ -159,6 +160,7 @@ local function writeNKConfigToFile(nkConfig, nkPhases, fileName)
    f:write(string.format('"write_loads_on_last_step": %s,\n', tostring(nkConfig.write_loads_on_last_step)))
    f:write(string.format('"write_limiter_values": %s,\n', tostring(nkConfig.write_limiter_values)))
    f:write(string.format('"write_residual_values": %s,\n', tostring(nkConfig.write_residual_values)))
+   f:write(string.format('"write_gradient_values": %s,\n', tostring(nkConfig.write_gradient_values)))
    f:write(string.format('"write_loads": %s,\n', tostring(nkConfig.write_loads)))
    -- write out phases
    for i=1,#nkPhases do
@@ -193,7 +195,8 @@ NewtonKrylovPhaseDefaults = {
    start_cfl = 1.0,
    max_cfl = 1000.0,
    auto_cfl_exponent = 0.75,
-
+   limit_on_cfl_increase_ratio = 2.0,
+   limit_on_cfl_decrease_ratio = 0.1,
 }
 
 local NewtonKrylovPhases = {}
@@ -258,6 +261,8 @@ function NewtonKrylovPhase:tojson()
       str = str .. string.format('    "start_cfl": %.18e,\n', self.start_cfl)
       str = str .. string.format('    "max_cfl": %.18e,\n', self.max_cfl)
       str = str .. string.format('    "auto_cfl_exponent": %.18e,\n', self.auto_cfl_exponent)
+      str = str .. string.format('    "limit_on_cfl_increase_ratio": %.18e,\n', self.limit_on_cfl_increase_ratio)
+      str = str .. string.format('    "limit_on_cfl_decrease_ratio": %.18e,\n', self.limit_on_cfl_decrease_ratio)
    end
    str = str .. '    "dummy_entry_without_trailing_comma": 0\n' -- no comma on last entry
    str = str .. '}'

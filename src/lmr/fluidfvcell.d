@@ -389,7 +389,7 @@ public:
         repr ~= ", fr_reactions_allowed=" ~ to!string(fr_reactions_allowed);
         repr ~= ", contains_flow_data=" ~ to!string(contains_flow_data);
         repr ~= ", allow_k_omega_update=" ~ to!string(allow_k_omega_update);
-        repr ~= ",\n... fs=" ~ to!string(fs);
+        repr ~= ",\n... fs=" ~ (fs ? to!string(*fs) : "None");
         repr ~= ",\n... U=" ~ to!string(U);
         repr ~= ",\n... dUdt=" ~ to!string(dUdt);
         repr ~= ")";
@@ -773,7 +773,7 @@ public:
                 // Oops, it seems that the thermo update has failed to work
                 // using the internal energy and density that have been
                 // decoded from the current conserved quantities.
-                if (myConfig.ignore_low_T_thermo_update_failure && (rho > 0.0)) {
+                if (myConfig.solverMode != SolverMode.steady && myConfig.ignore_low_T_thermo_update_failure && (rho > 0.0)) {
                     // This small-energy, hopefully-transient error may get
                     // washed out of the flow field, so let's try to keep going.
                     // We reset the thermo data to an acceptable low-T state

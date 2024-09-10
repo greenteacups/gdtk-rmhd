@@ -11,6 +11,7 @@
 
 module init;
 
+import std.math: pow;
 import std.algorithm : min, sort, find;
 import std.conv : to;
 import std.parallelism : parallel, defaultPoolThreads;
@@ -45,7 +46,7 @@ import blockio : BinaryBlockIO, GzipBlockIO;
 import lmr.fvcell : FVCell;
 import fvcellio;
 import fileutil : ensure_directory_is_present;
-import lmr.loads : init_loads_metadata_file;
+import lmr.loads : init_loads_metadata_file, initRunTimeLoads;
 
 version(mpi_parallel) {
     import mpi;
@@ -99,7 +100,7 @@ void readControl()
     mixin(update_int("cfl_count", "cfl_count"));
     mixin(update_double("max_time", "max_time"));
     mixin(update_int("max_step", "max_step"));
-    mixin(update_double("dt_plot", "dt_plot"));
+    // mixin(update_double("dt_plot", "dt_plot")); // 2024-08-07 moved to dt_plot_schedule in config file.
     mixin(update_double("dt_history", "dt_history"));
     mixin(update_double("dt_loads", "dt_loads"));
     mixin(update_int("write_loads_at_step", "write_loads_at_step"));
@@ -124,7 +125,7 @@ void readControl()
         writeln("  cfl_count: ", cfg.cfl_count);
         writeln("  max_time: ", cfg.max_time);
         writeln("  max_step: ", cfg.max_step);
-        writeln("  dt_plot: ", cfg.dt_plot);
+        // writeln("  dt_plot: ", cfg.dt_plot); // 2024-08-07 moved to dt_plot_schedule in config file.
         writeln("  dt_history: ", cfg.dt_history);
         writeln("  dt_loads: ", cfg.dt_loads);
         writeln("  write_loads_at_step: ", cfg.write_loads_at_step);
@@ -193,18 +194,17 @@ void initLocalBlocks()
         }
     }
     else {
-	    foreach (blk; globalBlocks) {
+        foreach (blk; globalBlocks) {
             auto fblk = cast(FluidBlock) blk;
-	        if (fblk) { localFluidBlocks ~= fblk; }
+            if (fblk) { localFluidBlocks ~= fblk; }
             auto mysblk = cast(SSolidBlock) blk;
             if (mysblk) { localSolidBlocks ~= mysblk; }
-	    }
+        }
     }
     // Set block IDs
     foreach (blk; localFluidBlocks) { cfg.localFluidBlockIds ~= blk.id; }
     foreach (blk; localSolidBlocks) { cfg.localSolidBlockIds ~= blk.id; }
-
-}
+} // end initLocalBlocks()
 
 /**
  * Set the pool of threads on a per process basis.
@@ -241,13 +241,13 @@ void initThreadPool(int maxCPUs, int threadsPerMPITask)
 	    writeln("Single process running with ", extraThreadsInPool+1, " threads.");
 	}
     }
-}
+} // end initThreadPool()
 
 /**
  * Initialise basic components of all fluid blocks.
  *
  * This function instructs blocks to:
- *   + initialise gas moodel
+ *   + initialise gas model
  *   + initialise any workspace in the block
  *   + set globals for Lua state used by user-defined hooks
  *   + complete the construction of boundary conditions
@@ -578,6 +578,37 @@ void initLeastSquaresStencils()
 }
 
 /**
+ * Initialise the unstructured grid limiters (for unstructured blocks).
+ *
+ * Authors: KAD
+ * Date: 2024-08-06
+ */
+void initUSGlimiters()
+{
+    auto sblock = cast(SFluidBlock) localFluidBlocks[0];
+    if (sblock) return; // we don't need a reference length for structured grid simulations
+
+    double dim = to!double(GlobalConfig.dimensions);
+    double length = 0.0;
+
+    // compute a reference length for the computational domain
+    foreach (blk; localFluidBlocks) {
+        foreach (cell; blk.cells) { length += cell.volume[0].re; }
+    }
+    version(mpi_parallel) {
+        MPI_Allreduce(MPI_IN_PLACE,&length,1,MPI_DOUBLE,MPI_SUM,MPI_COMM_WORLD);
+    }
+    length = pow(length, 1.0/dim);
+
+    if (GlobalConfig.is_master_task) { writeln("Computational Domain Reference Length (m): ", length); }
+
+    // set the reference length in the gradients objects for later use in computing the unstructured grid limiter
+    foreach (blk; localFluidBlocks) {
+        foreach (cell; blk.cells) { cell.gradients.lref = length; }
+    }
+}
+
+/**
  * Initialise the MPL limiter (for unstructured blocks).
  *
  * Authors: KAD and RJG
@@ -640,6 +671,19 @@ void initCornerCoordinates()
 void initWallDistances()
 {
     compute_wall_distances();
+}
+
+/**
+ * Initialise run-time loads computation.
+ *
+ * Authors: RJG
+ * Date: 2024-08-12
+ */
+void initRunTimeLoads()
+{
+    string content = readText(lmrCfg.cfgFile);
+    JSONValue jsonData = parseJSON!string(content);
+    initRunTimeLoads(jsonData["run_time_loads"]);
 }
 
 

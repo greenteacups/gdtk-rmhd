@@ -455,6 +455,68 @@ SpatialDerivLocn spatial_deriv_locn_from_name(string name)
     }
 }
 
+enum InviscidLeastSquaresType {
+    unweighted_normal,
+    weighted_normal,
+    unweighted_qr,
+    weighted_qr
+}
+
+@nogc
+string inviscid_least_squares_type_name(InviscidLeastSquaresType ilst)
+{
+    final switch ( ilst ) {
+    case InviscidLeastSquaresType.unweighted_normal: return "unweighted_normal";
+    case InviscidLeastSquaresType.weighted_normal: return "weighted_normal";
+    case InviscidLeastSquaresType.unweighted_qr: return "unweighted_qr";
+    case InviscidLeastSquaresType.weighted_qr: return "weighted_qr";
+    }
+}
+
+@nogc
+InviscidLeastSquaresType inviscid_least_squares_type_from_name(string name)
+{
+    switch ( name ) {
+    case "unweighted_normal": return InviscidLeastSquaresType.unweighted_normal;
+    case "weighted_normal": return InviscidLeastSquaresType.weighted_normal;
+    case "unweighted_qr": return InviscidLeastSquaresType.unweighted_qr;
+    case "weighted_qr": return InviscidLeastSquaresType.weighted_qr;
+    default:
+        throw new FlowSolverException("Invalid inviscid least squares type  name");
+    }
+}
+
+enum ViscousLeastSquaresType {
+    unweighted_normal,
+    weighted_normal,
+    unweighted_qr,
+    weighted_qr
+}
+
+@nogc
+string viscous_least_squares_type_name(ViscousLeastSquaresType ilst)
+{
+    final switch ( ilst ) {
+    case ViscousLeastSquaresType.unweighted_normal: return "unweighted_normal";
+    case ViscousLeastSquaresType.weighted_normal: return "weighted_normal";
+    case ViscousLeastSquaresType.unweighted_qr: return "unweighted_qr";
+    case ViscousLeastSquaresType.weighted_qr: return "weighted_qr";
+    }
+}
+
+@nogc
+ViscousLeastSquaresType viscous_least_squares_type_from_name(string name)
+{
+    switch ( name ) {
+    case "unweighted_normal": return ViscousLeastSquaresType.unweighted_normal;
+    case "weighted_normal": return ViscousLeastSquaresType.weighted_normal;
+    case "unweighted_qr": return ViscousLeastSquaresType.unweighted_qr;
+    case "weighted_qr": return ViscousLeastSquaresType.weighted_qr;
+    default:
+        throw new FlowSolverException("Invalid viscous least squares type  name");
+    }
+}
+
 // Symbolic names for the flavours of unstructured limiters.
 enum UnstructuredLimiter {
     svan_albada,
@@ -1026,6 +1088,8 @@ final class GlobalConfig {
     shared static bool interpolate_in_local_frame = true; // only for structured-grid
     // The unstructured solver has a selection of limiters available
     shared static UnstructuredLimiter unstructured_limiter = UnstructuredLimiter.venkat;
+    shared static bool apply_unstructured_limiter_stagnation_point_filter = false;
+    shared static bool apply_unstructured_limiter_min_pressure_filter = false;
     shared static int freeze_limiter_on_step = 1_000_000_000;
     shared static bool frozen_limiter = false;
     // Allow the AUSMDV entropy fix to be switched off
@@ -1067,6 +1131,8 @@ final class GlobalConfig {
     // viscous effects are important.
     shared static double compression_tolerance = -0.30;
     shared static ShockDetector shock_detector = ShockDetector.PJ;
+    // Used by adaptive_ausmdv_asf blended-flux calculator because some dissipation is usually needed.
+    shared static double shock_detector_minimum_blend_value = 0.1;
     //
     // How many iterations to perform shock detector averaging
     shared static int shock_detector_smoothing = 0;
@@ -1115,6 +1181,9 @@ final class GlobalConfig {
     shared static bool viscous = false;
     // If true, viscous effects are included in the gas-dynamic update.
     shared static bool use_viscosity_from_cells = false;
+    // set the type of least squares calculation
+    shared static InviscidLeastSquaresType inviscid_least_squares_type = InviscidLeastSquaresType.unweighted_normal;
+    shared static ViscousLeastSquaresType viscous_least_squares_type = ViscousLeastSquaresType.weighted_normal;
     // Proper treatment of viscous effects at the walls implies using the viscous
     // transport coefficients evaluated at the wall temperature, however,
     // Eilmer3 was set up to use the cell-average values of transport coefficients
@@ -1239,7 +1308,8 @@ final class GlobalConfig {
     shared static int cfl_count = 10;  // steps between checking time step size
     shared static bool fixed_time_step = false; // set true to fix dt_allow
     //
-    shared static double dt_plot = 1.0e-3; // interval for writing soln
+    shared static double dt_plot_value = 1.0e-3; // interval for writing soln
+    static Schedule!double dt_plot_schedule;
     shared static int write_flow_solution_at_step = -1; // flag for premature writing of flow solution files
     shared static double dt_history = 1.0e-3; // interval for writing sample
     shared static double dt_loads = 1.0e-3; // interval for writing loads on boundary groups
@@ -1310,6 +1380,7 @@ final class GlobalConfig {
 // at the lower levels of the code without having to guard them with memory barriers.
 class LocalConfig {
 public:
+    SolverMode solverMode;
     bool in_mpi_context;
     int universe_blk_id;
     string grid_format;
@@ -1368,6 +1439,8 @@ public:
     bool enforce_species_density_positivity;
     bool scale_species_after_reconstruction;
     UnstructuredLimiter unstructured_limiter;
+    bool apply_unstructured_limiter_stagnation_point_filter;
+    bool apply_unstructured_limiter_min_pressure_filter;
     int freeze_limiter_on_step;
     bool use_extended_stencil;
     double smooth_limiter_coeff;
@@ -1382,6 +1455,7 @@ public:
     bool do_shock_detect;
     bool damped_outflow;
     bool strict_shock_detector;
+    double shock_detector_minimum_blend_value;
     bool artificial_compressibility;
     double ac_alpha;
     //
@@ -1409,6 +1483,8 @@ public:
     int njc_write;
     int nkc_write;
     //
+    InviscidLeastSquaresType inviscid_least_squares_type;
+    ViscousLeastSquaresType viscous_least_squares_type;
     SpatialDerivCalc spatial_deriv_calc;
     SpatialDerivLocn spatial_deriv_locn;
     bool include_ghost_cells_in_spatial_deriv_clouds;
@@ -1477,10 +1553,16 @@ public:
         ShapeSensitivityCalculatorOptions sscOptions;
     }
     string[] flow_variable_list;
+    // Some workspace for the osher flux calculator.
+    GasState* osher_flux_calc_stateLstar;
+    GasState* osher_flux_calc_stateRstar;
+    GasState* osher_flux_calc_stateX0;
+
     //
     this(int universe_blk_id)
     {
         alias cfg = GlobalConfig;
+        solverMode = cfg.solverMode;
         in_mpi_context = cfg.in_mpi_context;
         this.universe_blk_id = universe_blk_id;
         grid_format = cfg.grid_format;
@@ -1542,6 +1624,8 @@ public:
         enforce_species_density_positivity = cfg.enforce_species_density_positivity;
         scale_species_after_reconstruction = cfg.scale_species_after_reconstruction;
         unstructured_limiter = cfg.unstructured_limiter;
+        apply_unstructured_limiter_stagnation_point_filter = cfg.apply_unstructured_limiter_stagnation_point_filter;
+        apply_unstructured_limiter_min_pressure_filter = cfg.apply_unstructured_limiter_min_pressure_filter;
         freeze_limiter_on_step = cfg.freeze_limiter_on_step;
         use_extended_stencil = cfg.use_extended_stencil;
         smooth_limiter_coeff = cfg.smooth_limiter_coeff;
@@ -1556,6 +1640,7 @@ public:
         do_shock_detect = cfg.do_shock_detect;
         damped_outflow = cfg.damped_outflow;
         strict_shock_detector = cfg.strict_shock_detector;
+        shock_detector_minimum_blend_value = cfg.shock_detector_minimum_blend_value;
         //
         artificial_compressibility = cfg.artificial_compressibility;
         ac_alpha = cfg.ac_alpha;
@@ -1574,6 +1659,8 @@ public:
         //
         viscous = cfg.viscous;
         use_viscosity_from_cells = cfg.use_viscosity_from_cells;
+        inviscid_least_squares_type = cfg.inviscid_least_squares_type;
+        viscous_least_squares_type = cfg.viscous_least_squares_type;
         spatial_deriv_calc = cfg.spatial_deriv_calc;
         spatial_deriv_locn = cfg.spatial_deriv_locn;
         include_ghost_cells_in_spatial_deriv_clouds =
@@ -1659,6 +1746,10 @@ public:
         if (cfg.reacting) {
             thermochemUpdate = init_thermochemical_reactor(gmodel, cfg.reactions_file, cfg.energy_exchange_file);
         }
+        // 2024-08-04 Some workspace for the osher flux calculator.
+        osher_flux_calc_stateLstar = new GasState(gmodel);
+        osher_flux_calc_stateRstar = new GasState(gmodel);
+        osher_flux_calc_stateX0 = new GasState(gmodel);
     }
 
     void update_control_parameters()
@@ -1802,6 +1893,17 @@ void set_config_for_core(JSONValue jsonData)
     double[] cfl_schedule_times = getJSONdoublearray(jsonData, "cfl_schedule_times", cfl_schedule_times_default);
     double[] cfl_schedule_values = getJSONdoublearray(jsonData, "cfl_schedule_values", cfl_schedule_values_default);
     cfg.cfl_schedule = new Schedule!double(cfl_schedule_times, cfl_schedule_values);
+    // The dt_plot schedule arrives as a pair of tables that should have at least one entry each.
+    int dt_plot_schedule_length = getJSONint(jsonData, "dt_plot_schedule_length", 1);
+    double[] dt_plot_schedule_values_default;
+    double[] dt_plot_schedule_times_default;
+    foreach (i; 0 .. dt_plot_schedule_length) {
+        dt_plot_schedule_times_default ~= 0.0;
+        dt_plot_schedule_values_default ~= 1.0e-3;
+    }
+    double[] dt_plot_schedule_times = getJSONdoublearray(jsonData, "dt_plot_schedule_times", dt_plot_schedule_times_default);
+    double[] dt_plot_schedule_values = getJSONdoublearray(jsonData, "dt_plot_schedule_values", dt_plot_schedule_values_default);
+    cfg.dt_plot_schedule = new Schedule!double(dt_plot_schedule_times, dt_plot_schedule_values);
     //
     mixin(update_bool("residual_smoothing", "residual_smoothing"));
     mixin(update_bool("with_local_time_stepping", "with_local_time_stepping"));
@@ -1876,6 +1978,8 @@ void set_config_for_core(JSONValue jsonData)
     mixin(update_bool("enforce_species_density_positivity", "enforce_species_density_positivity"));
     mixin(update_bool("scale_species_after_reconstruction", "scale_species_after_reconstruction"));
     mixin(update_enum("unstructured_limiter", "unstructured_limiter", "unstructured_limiter_from_name"));
+    mixin(update_bool("apply_unstructured_limiter_stagnation_point_filter", "apply_unstructured_limiter_stagnation_point_filter"));
+    mixin(update_bool("apply_unstructured_limiter_min_pressure_filter", "apply_unstructured_limiter_min_pressure_filter"));
     mixin(update_int("freeze_limiter_on_step", "freeze_limiter_on_step"));
     mixin(update_bool("use_extended_stencil", "use_extended_stencil"));
     mixin(update_double("smooth_limiter_coeff", "smooth_limiter_coeff"));
@@ -1888,6 +1992,7 @@ void set_config_for_core(JSONValue jsonData)
     mixin(update_double("compression_tolerance", "compression_tolerance"));
     mixin(update_enum("shock_detector", "shock_detector", "shock_detector_from_name"));
     mixin(update_bool("do_shock_detect", "do_shock_detect"));
+    mixin(update_double("shock_detector_minimum_blend_value", "shock_detector_minimum_blend_value"));
     mixin(update_bool("damped_outflow", "damped_outflow"));
     mixin(update_bool("strict_shock_detector", "strict_shock_detector"));
     mixin(update_enum("flux_calculator", "flux_calculator", "flux_calculator_from_name"));
@@ -1917,6 +2022,7 @@ void set_config_for_core(JSONValue jsonData)
         writeln("  gasdynamic_update_scheme: ", gasdynamic_update_scheme_name(cfg.gasdynamic_update_scheme));
         writeln("  eval_udf_source_terms_at_each_stage: ", cfg.eval_udf_source_terms_at_each_stage);
         writeln("  cfl_schedule: ", cfg.cfl_schedule);
+        writeln("  dt_plot_schedule: ", cfg.dt_plot_schedule);
         writeln("  residual_smoothing: ", cfg.residual_smoothing);
         writeln("  with_local_time_stepping: ", cfg.with_local_time_stepping);
         writeln("  local_time_stepping_limit_factor: ", cfg.local_time_stepping_limit_factor);
@@ -1969,6 +2075,8 @@ void set_config_for_core(JSONValue jsonData)
         writeln("  enforce_species_density_positivity: ", cfg.enforce_species_density_positivity);
         writeln("  scale_species_after_reconstruction: ", cfg.scale_species_after_reconstruction);
         writeln("  unstructured_limiter: ", unstructured_limiter_name(cfg.unstructured_limiter));
+        writeln("  apply_unstructured_limiter_stagnation_point_filter: ", cfg.apply_unstructured_limiter_stagnation_point_filter);
+        writeln("  apply_unstructured_limiter_min_pressure_filter: ", cfg.apply_unstructured_limiter_min_pressure_filter);
         writeln("  freeze_limiter_on_step: ", cfg.freeze_limiter_on_step);
         writeln("  use_extended_stencil: ", cfg.use_extended_stencil);
         writeln("  smooth_limiter_coeff: ", cfg.smooth_limiter_coeff);
@@ -1983,6 +2091,7 @@ void set_config_for_core(JSONValue jsonData)
         writeln("  shock_detector_smoothing: ", cfg.shock_detector_smoothing);
         writeln("  frozen_shock_detector: ", cfg.frozen_shock_detector);
         writeln("  shock_detector_freeze_step: ", cfg.shock_detector_freeze_step);
+        writeln("  shock_detector_minimum_blend_value: ", cfg.shock_detector_minimum_blend_value);
         //
         writeln("  MHD: ", cfg.MHD);
         writeln("  MHD_static_field: ", cfg.MHD_static_field);
@@ -1999,6 +2108,8 @@ void set_config_for_core(JSONValue jsonData)
     //
     mixin(update_bool("viscous", "viscous"));
     mixin(update_bool("use_viscosity_from_cells", "use_viscosity_from_cells"));
+    mixin(update_enum("inviscid_least_squares_type", "inviscid_least_squares_type", "inviscid_least_squares_type_from_name"));
+    mixin(update_enum("viscous_least_squares_type", "viscous_least_squares_type", "viscous_least_squares_type_from_name"));
     mixin(update_enum("spatial_deriv_calc", "spatial_deriv_calc", "spatial_deriv_calc_from_name"));
     mixin(update_enum("spatial_deriv_locn", "spatial_deriv_locn", "spatial_deriv_locn_from_name"));
     mixin(update_bool("include_ghost_cells_in_spatial_deriv_clouds", "include_ghost_cells_in_spatial_deriv_clouds"));
@@ -2028,6 +2139,8 @@ void set_config_for_core(JSONValue jsonData)
     if (cfg.verbosity_level > 1) {
         writeln("  viscous: ", cfg.viscous);
         writeln("  use_viscosity_from_cells: ", cfg.use_viscosity_from_cells);
+        writeln("  inviscid_least_squares_type: ", inviscid_least_squares_type_name(cfg.inviscid_least_squares_type));
+        writeln("  viscous_least_squares_type: ", viscous_least_squares_type_name(cfg.viscous_least_squares_type));
         writeln("  spatial_deriv_calc: ", spatial_deriv_calc_name(cfg.spatial_deriv_calc));
         writeln("  spatial_deriv_locn: ", spatial_deriv_locn_name(cfg.spatial_deriv_locn));
         writeln("  include_ghost_cells_in_spatial_deriv_clouds: ", cfg.include_ghost_cells_in_spatial_deriv_clouds);

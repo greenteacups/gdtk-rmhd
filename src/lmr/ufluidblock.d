@@ -323,6 +323,9 @@ public:
         celldata.c2v.length = ncells;
         celldata.lsqgradients.reserve(ncells + nghost);
         foreach (i; 0 .. ncells + nghost) celldata.lsqgradients ~= LSQInterpGradients(nsp, nmodes, nturb); // TODO: skip if not needed
+        // TODO: for now this is only needed for the adjoint solver and/or the check-jacobian tool - we can think about dropping this for the flow solver. KAD 2024-08-28
+        celldata.saved_lsqgradients.reserve(ncells + nghost);
+        foreach (n; 0 .. ncells+nghost) celldata.saved_lsqgradients ~= LSQInterpGradients(myConfig.n_species, myConfig.n_modes, myConfig.turb_model.nturb);
 
         facedata.dL.length = nfaces;
         facedata.dR.length = nfaces;
@@ -718,15 +721,30 @@ public:
             // LSQ weights are used in the calculation of flow gradients for the viscous terms.
             if (myConfig.spatial_deriv_locn == SpatialDerivLocn.cells) {
                 foreach(cell; cells) {
-                    cell.grad.set_up_workspace_leastsq(myConfig, cell.cloud_pos, cell.pos[gtl], false, *(cell.ws_grad));
+                    if (myConfig.viscous_least_squares_type == ViscousLeastSquaresType.weighted_normal ||
+                        myConfig.viscous_least_squares_type == ViscousLeastSquaresType.unweighted_normal) {
+                        cell.grad.set_up_workspace_leastsq_via_normal(myConfig, cell.cloud_pos, cell.pos[gtl], false, *(cell.ws_grad));
+                    } else {
+                        cell.grad.set_up_workspace_leastsq_via_qr_factorization(myConfig, cell.cloud_pos, cell.pos[gtl], false, *(cell.ws_grad));
+                    }
                 }
             } else if (myConfig.spatial_deriv_locn == SpatialDerivLocn.faces) {
                 foreach(iface; faces) {
-                    iface.grad.set_up_workspace_leastsq(myConfig, iface.cloud_pos, iface.pos, false, *(iface.ws_grad));
+                    if (myConfig.viscous_least_squares_type == ViscousLeastSquaresType.weighted_normal ||
+                        myConfig.viscous_least_squares_type == ViscousLeastSquaresType.unweighted_normal) {
+                        iface.grad.set_up_workspace_leastsq_via_normal(myConfig, iface.cloud_pos, iface.pos, false, *(iface.ws_grad));
+                    } else {
+                        iface.grad.set_up_workspace_leastsq_via_qr_factorization(myConfig, iface.cloud_pos, iface.pos, false, *(iface.ws_grad));
+                    }
                 }
             } else { // myConfig.spatial_deriv_locn == vertices
                 foreach(vtx; vertices) {
-                    vtx.grad.set_up_workspace_leastsq(myConfig, vtx.cloud_pos, vtx.pos[gtl], true, *(vtx.ws_grad));
+                    if (myConfig.viscous_least_squares_type == ViscousLeastSquaresType.weighted_normal ||
+                        myConfig.viscous_least_squares_type == ViscousLeastSquaresType.unweighted_normal) {
+                        vtx.grad.set_up_workspace_leastsq_via_normal(myConfig, vtx.cloud_pos, vtx.pos[gtl], true, *(vtx.ws_grad));
+                    } else {
+                        vtx.grad.set_up_workspace_leastsq_via_qr_factorization(myConfig, vtx.cloud_pos, vtx.pos[gtl], true, *(vtx.ws_grad));
+                    }
                 }
             }
         }
@@ -736,7 +754,12 @@ public:
         if (myConfig.interpolation_order > 1) {
             foreach (c; cells) {
                 try {
-                    c.ws.assemble_and_invert_normal_matrix(c.cell_cloud, myConfig.dimensions, gtl);
+                    if (myConfig.inviscid_least_squares_type == InviscidLeastSquaresType.unweighted_normal ||
+                        myConfig.inviscid_least_squares_type == InviscidLeastSquaresType.weighted_normal) {
+                        c.ws.assemble_and_invert_normal_matrix(c.cell_cloud, myConfig.dimensions, gtl, myConfig);
+                    } else {
+                        c.ws.compute_weights_via_qr_factorization(c.cell_cloud, myConfig.dimensions, gtl, myConfig);
+                    }
                 } catch (Exception e) {
                     debug {
                         writefln("In compute_least_squares_setup()," ~
@@ -819,14 +842,18 @@ public:
     override void convective_flux_phase0(bool allow_high_order_interpolation, size_t gtl=0,
                                          FluidFVCell[] cell_list = [], FVInterface[] iface_list = [], FVVertex[] vertex_list = [])
     // Compute gradients of flow quantities for higher-order reconstruction, if required.
-    // To be used, later, in the convective flux calculation.
+    // These will be used, later, in the convective flux calculation.
     {
 
         if (cell_list.length == 0) { cell_list = cells; }
         if (vertex_list.length == 0) { vertex_list = vertices; }
 
         if (allow_high_order_interpolation && (myConfig.interpolation_order > 1)) {
+
+            // We first compute the gradients (and store some data for later use in evaluating the limiters)
             foreach (c; cell_list) {
+                c.gradients.compute_lsq_values(c.cell_cloud, *(c.ws), myConfig);
+
                 if (GlobalConfig.frozen_limiter == false) {
                     if (myConfig.unstructured_limiter == UnstructuredLimiter.venkat_mlp) {
                         c.gradients.store_max_min_values_for_extended_stencil(c.cell_cloud, myConfig);
@@ -834,12 +861,61 @@ public:
                         c.gradients.store_max_min_values_for_compact_stencil(c.cell_cloud, myConfig);
                     }
                 }
-                c.gradients.compute_lsq_values(c.cell_cloud, *(c.ws), myConfig);
             }
-        } // end if interpolation_order > 1
-    } // end convective_flux-phase0()
 
-        @nogc
+            // We now fill in gradients for ghost cells on the edge of the computational domain (note that we will handle mapped ghost cells later)
+            // TODO: The dev team are currently discussing whether to refactor the next two actions into a boundary condition effect.
+            //       [KAD 09-08-2024]
+            foreach (bcond; bc) {
+                if (bcond.ghost_cell_data_available == false) { continue; }
+                // Proceed to do some work only if we have ghost cells in which to insert gradients.
+                bool found_mapped_cell_bc = false;
+                foreach (gce; bcond.preReconAction) {
+                    auto mygce = cast(GhostCellMappedCellCopy)gce;
+                    if (mygce) {
+                        // we transfer mapped cells data later via the exchange_ghost_cell_boundary_convective_gradient_data routine
+                        found_mapped_cell_bc = true;
+                    } // end if (mygce)
+                } // end foreach gce
+                if (!found_mapped_cell_bc) {
+                    // There are no other cells backing the ghost cells on this boundary.
+                    // Fill in ghost-cell gradients from the other side of the face.
+                    // TODO: we currently loop through all faces along this boundary, regardless of the iface_list,
+                    //       this creates an inefficiency when forming high-order Jacobians. We could improve this.
+                    //       [KAD 09-08-2024]
+                    foreach (i, f; bcond.faces) {
+                        if (bcond.outsigns[i] == 1) {
+                            f.right_cell.gradients.copy_values_from(*(f.left_cell.gradients));
+                        } else {
+                            f.left_cell.gradients.copy_values_from(*(f.right_cell.gradients));
+                        }
+                    } // end foreach f
+                } // end if !found_mapped_cell_bc
+            } // end foreach bcond
+
+            // We now reflect the copied gradient for ghost cells along "wall" type boundary conditions
+            foreach (bcond; bc) {
+                if (bcond.ghost_cell_data_available == false) { continue; }
+                // Proceed to do some work only if we have ghost cells along a "wall" type boundary
+                if (bcond.type.canFind("wall")) {
+                    // TODO: we currently loop through all faces along this boundary, regardless of the iface_list,
+                    //       this creates an inefficiency when forming high-order Jacobians. We could improve this.
+                    //       [KAD 09-08-2024]
+                    foreach (i, f; bcond.faces) {
+                        if (bcond.outsigns[i] == 1) {
+                            f.right_cell.gradients.reflect_normal(f, myConfig);
+                        } else {
+                            f.left_cell.gradients.reflect_normal(f, myConfig);
+                        }
+                    } // end foreach f
+                } // end if wall
+            } // end foreach bcond
+
+        } // end if interpolation_order > 1
+
+    } // end convective_flux_phase0()
+
+    @nogc
     override void convective_flux_phase1(bool allow_high_order_interpolation, size_t gtl=0,
                                          FluidFVCell[] cell_list = [], FVInterface[] iface_list = [], FVVertex[] vertex_list = [])
         // Compute limiter values of flow quantities for higher-order reconstruction, if required.
@@ -850,9 +926,11 @@ public:
         if (vertex_list.length == 0) { vertex_list = vertices; }
 
         if (allow_high_order_interpolation && (myConfig.interpolation_order > 1)) {
+
             if (GlobalConfig.frozen_limiter == false) {
+
+                // compute the gradient limiter values
                 foreach (c; cell_list) {
-                    // It is more efficient to determine limiting factor here for some usg limiters.
                     final switch (myConfig.unstructured_limiter) {
                         case UnstructuredLimiter.svan_albada:
                             // do nothing now
@@ -892,9 +970,48 @@ public:
                             break;
                     } // end switch
                 } // end foreach c
+
+                if (myConfig.apply_unstructured_limiter_stagnation_point_filter) {
+                    foreach (c; cell_list) {
+                        c.gradients.apply_stagnation_point_filter(c.cell_cloud, myConfig);
+                    }
+                }
+
+                if (myConfig.apply_unstructured_limiter_min_pressure_filter) {
+                    foreach (c; cell_list) {
+                        c.gradients.apply_minimum_limiter_filter(myConfig);
+                    }
+                }
+
+                // We now fill in limiter values for ghost cells on the edge of the computational domain (note that we will handle mapped ghost cells later)
+                foreach (bcond; bc) {
+                    if (bcond.ghost_cell_data_available == false) { continue; }
+                    // Proceed to do some work only if we have ghost cells in which to insert limiter values.
+                    bool found_mapped_cell_bc = false;
+                    foreach (gce; bcond.preReconAction) {
+                        auto mygce = cast(GhostCellMappedCellCopy)gce;
+                        if (mygce) {
+                            // we transfer mapped cells data later via the exchange_ghost_cell_boundary_convective_gradient_data routine
+                            found_mapped_cell_bc = true;
+                        } // end if (mygce)
+                    } // end foreach gce
+                    if (!found_mapped_cell_bc) {
+                        // There are no other cells backing the ghost cells on this boundary.
+                        // Fill in ghost-cell limiter values from the other side of the face.
+                        foreach (i, f; bcond.faces) {
+                            if (bcond.outsigns[i] == 1) {
+                                f.right_cell.gradients.copy_limiter_values_from(*(f.left_cell.gradients));
+                            } else {
+                                f.left_cell.gradients.copy_limiter_values_from(*(f.right_cell.gradients));
+                            }
+                        } // end foreach f
+                    } // end if !found_mapped_cell_bc
+                } // end foreach bcond
             } // if (frozen_limter == false)
+
         } // end if interpolation_order > 1
-    } // end convective_flux-phase0()
+
+    } // end convective_flux_phase1()
 
     @nogc
     override void convective_flux_phase2(bool allow_high_order_interpolation, size_t gtl=0,
@@ -905,34 +1022,6 @@ public:
         if (cell_list.length == 0) { cell_list = cells; }
         if (iface_list.length == 0) { iface_list = faces; }
 
-        if (allow_high_order_interpolation && (myConfig.interpolation_order > 1)) {
-            // Fill in gradients for ghost cells so that left- and right- cells at all faces,
-            // including those along block boundaries, have the latest gradient values.
-            foreach (bcond; bc) {
-                if (bcond.ghost_cell_data_available == false) { continue; }
-                // Proceed to do some work only if we have ghost cells in which to insert gradients.
-                bool found_mapped_cell_bc = false;
-                foreach (gce; bcond.preReconAction) {
-                    auto mygce = cast(GhostCellMappedCellCopy)gce;
-                    if (mygce) {
-                        found_mapped_cell_bc = true;
-                        // we have already transferred the cell gradients for mapped cells
-                    } // end if (mygce)
-                } // end foreach gce
-                if (!found_mapped_cell_bc) {
-                    // There are no other cells backing the ghost cells on this boundary.
-                    // Fill in ghost-cell gradients from the other side of the face.
-                    foreach (i, f; bcond.faces) {
-                        if (bcond.outsigns[i] == 1) {
-                            f.right_cell.gradients.copy_values_from(*(f.left_cell.gradients));
-                        } else {
-                            f.left_cell.gradients.copy_values_from(*(f.right_cell.gradients));
-                        }
-                    } // end foreach f
-                } // end if !found_mapped_cell_bc
-            } // end foreach bcond
-        } // end if interpolation_order > 1
-        //
         // At this point, we should have all gradient values up to date and we are now ready
         // to reconstruct field values and compute the convective fluxes.
         foreach (f; iface_list) {
@@ -950,7 +1039,7 @@ public:
                 assert(0, "oops, a face without attached cells");
             }
         } // end foreach face
-    } // end convective_flux-phase1()
+    } // end convective_flux_phase2()
 
     override size_t[] get_cell_write_indices() {
         size_t[] index;
