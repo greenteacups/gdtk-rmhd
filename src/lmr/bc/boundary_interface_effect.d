@@ -6,33 +6,35 @@
 //    the break-up of the Fixed_T boundary condition.
 //
 
-module bc.boundary_interface_effect;
+module lmr.bc.boundary_interface_effect;
 
-import std.json;
-import std.string;
 import std.conv;
-import std.stdio;
+import std.json;
 import std.math;
-import ntypes.complex;
-import nm.number;
-import nm.brent;
-import nm.bracketing;
+import std.stdio;
+import std.string;
 
-import geom;
-import json_helper;
-import globalconfig;
-import globaldata;
-import flowstate;
-import fvinterface;
-import lmr.fluidfvcell;
-import fluidblock;
-import sfluidblock;
 import gas;
-import bc;
-import solidfvcell;
-import solidfvinterface;
+import geom;
 import kinetics.equilibrium_update;
-import mass_diffusion;
+import nm.bracketing;
+import nm.brent;
+import nm.number;
+import ntypes.complex;
+import util.json_helper;
+
+import lmr.bc;
+import lmr.flowstate;
+import lmr.fluidblock;
+import lmr.fluidfvcell;
+import lmr.fvinterface;
+import lmr.globalconfig;
+import lmr.globaldata;
+import lmr.mass_diffusion;
+import lmr.sfluidblock;
+import lmr.solid.solidfvcell;
+import lmr.solid.solidfvinterface;
+
 
 BoundaryInterfaceEffect make_BIE_from_json(JSONValue jsonData, int blk_id, int boundary)
 {
@@ -55,10 +57,15 @@ BoundaryInterfaceEffect make_BIE_from_json(JSONValue jsonData, int blk_id, int b
         double r = getJSONdouble(jsonData, "r", 0.0);
         newBIE = new BIE_FlowStateCopy(blk_id, boundary, flowstate, x0, y0, z0, r);
         break;
-    case "flow_state_copy_from_profile_to_interface":
+    case "flow_state_copy_from_static_profile_to_interface":
         string fname = getJSONstring(jsonData, "filename", "");
         string match = getJSONstring(jsonData, "match", "xyz");
-        newBIE = new BIE_FlowStateCopyFromProfile(blk_id, boundary, fname, match);
+        newBIE = new BIE_FlowStateCopyFromStaticProfile(blk_id, boundary, fname, match);
+        break;
+    case "flow_state_copy_from_transient_profile_to_interface":
+        string fname = getJSONstring(jsonData, "filename", "");
+        string match = getJSONstring(jsonData, "match", "xyz");
+        newBIE = new BIE_FlowStateCopyFromTransientProfile(blk_id, boundary, fname, match);
         break;
     case "flow_state_copy_from_history_to_interface":
         string fname = getJSONstring(jsonData, "filename", "");
@@ -369,17 +376,17 @@ private:
 } // end class BIE_FlowStateCopy
 
 
-class BIE_FlowStateCopyFromProfile : BoundaryInterfaceEffect {
+class BIE_FlowStateCopyFromStaticProfile : BoundaryInterfaceEffect {
 public:
     this(int id, int boundary, string fileName, string match)
     {
-        super(id, boundary, "flowStateCopyFromProfile");
-        fprofile = new FlowProfile(fileName, match);
+        super(id, boundary, "flowStateCopyFromStaticProfile");
+        fprofile = new StaticFlowProfile(fileName, match);
     }
 
     override string toString() const
     {
-        return format("flowStateCopyFromProfile(filename=\"%s\", match=\"%s\")",
+        return format("flowStateCopyFromStaticProfile(filename=\"%s\", match=\"%s\")",
                       fprofile.fileName, fprofile.posMatch);
     }
 
@@ -423,9 +430,72 @@ public:
     } // end apply_structured_grid()
 
 private:
-    FlowProfile fprofile;
+    StaticFlowProfile fprofile;
 
-} // end class BIE_FlowStateCopyFromProfile
+} // end class BIE_FlowStateCopyFromStaticProfile
+
+
+class BIE_FlowStateCopyFromTransientProfile : BoundaryInterfaceEffect {
+public:
+    this(int id, int boundary, string fileName, string match)
+    {
+        super(id, boundary, "flowStateCopyFromTransientProfile");
+        fprofile = new TransientFlowProfile(fileName, match);
+    }
+
+    override string toString() const
+    {
+        return format("flowStateCopyFromTransientProfile(filename=\"%s\", match=\"%s\")",
+                      fprofile.fileName, fprofile.posMatch);
+    }
+
+    //@nogc
+    override void apply_for_interface_unstructured_grid(double t, int gtl, int ftl, FVInterface f)
+    {
+        BoundaryCondition bc = blk.bc[which_boundary];
+        fprofile.set_time_interpolation(t);
+        fprofile.set_flowstate(f.fs, f.id, f.pos);
+        fprofile.adjust_velocity(f.fs, f.pos, blk.omegaz);
+    }
+
+    override void apply_unstructured_grid(double t, int gtl, int ftl)
+    {
+        BoundaryCondition bc = blk.bc[which_boundary];
+        fprofile.set_time_interpolation(t);
+        foreach (i, f; bc.faces) {
+            fprofile.set_flowstate(f.fs, f.id, f.pos);
+            fprofile.adjust_velocity(f.fs, f.pos, blk.omegaz);
+        }
+    }
+
+    override void apply_for_interface_structured_grid(double t, int gtl, int ftl, FVInterface f)
+    {
+        auto gmodel = blk.myConfig.gmodel;
+        auto blk = cast(SFluidBlock) this.blk;
+        assert(blk !is null, "Oops, this should be an SFluidBlock object.");
+        BoundaryCondition bc = blk.bc[which_boundary];
+        fprofile.set_time_interpolation(t);
+        fprofile.set_flowstate(f.fs, f.id, f.pos);
+        fprofile.adjust_velocity(f.fs, f.pos, blk.omegaz);
+    }
+
+    override void apply_structured_grid(double t, int gtl, int ftl)
+    {
+        auto gmodel = blk.myConfig.gmodel;
+        auto blk = cast(SFluidBlock) this.blk;
+        assert(blk !is null, "Oops, this should be an SFluidBlock object.");
+        BoundaryCondition bc = blk.bc[which_boundary];
+        fprofile.set_time_interpolation(t);
+        foreach (i, f; bc.faces) {
+            fprofile.set_flowstate(f.fs, f.id, f.pos);
+            fprofile.adjust_velocity(f.fs, f.pos, blk.omegaz);
+        }
+    } // end apply_structured_grid()
+
+private:
+    TransientFlowProfile fprofile;
+
+} // end class BIE_FlowStateCopyFromTransientProfile
 
 
 class BIE_FlowStateCopyFromHistory : BoundaryInterfaceEffect {
@@ -451,8 +521,7 @@ public:
     override void apply_unstructured_grid(double t, int gtl, int ftl)
     {
         BoundaryCondition bc = blk.bc[which_boundary];
-        auto gmodel = blk.myConfig.gmodel;
-        fhistory.set_flowstate(fstate, t, gmodel);
+        fhistory.set_flowstate(fstate, t, blk.myConfig);
         foreach (i, f; bc.faces) { f.fs.copy_values_from(fstate); }
     }
 
@@ -466,8 +535,7 @@ public:
     {
         auto blk = cast(SFluidBlock) this.blk;
         assert(blk !is null, "Oops, this should be an SFluidBlock object.");
-        auto gmodel = blk.myConfig.gmodel;
-        fhistory.set_flowstate(fstate, t, gmodel);
+        fhistory.set_flowstate(fstate, t, blk.myConfig);
         BoundaryCondition bc = blk.bc[which_boundary];
         foreach (i, f; bc.faces) {
             f.fs.copy_values_from(fstate);

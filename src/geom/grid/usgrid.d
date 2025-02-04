@@ -23,8 +23,8 @@ import nm.number;
 import geom.misc.kdtree;
 
 import geom;
-import paver: PavedGrid, POINT_LIST, FACE_LIST, CELL_LIST;
-import paver2d;
+import geom.grid.paver: PavedGrid, POINT_LIST, FACE_LIST, CELL_LIST;
+import paver2d = geom.grid.paver2d;
 
 //-----------------------------------------------------------------
 // For the USGCell types, we will have only the linear elements,
@@ -2366,11 +2366,16 @@ public:
                     new_outsign_list ~= b.outsign_list[j];
                 }
             }
-            if (new_face_id_list.length!=0) {
-                new_boundaries ~= new BoundaryFaceSet(b.tag, new_face_id_list, new_outsign_list);
+            if (openFoam) {
+                b.face_id_list = new_face_id_list;
+                b.outsign_list = new_outsign_list;
+            } else {
+                if (new_face_id_list.length!=0) {
+                    new_boundaries ~= new BoundaryFaceSet(b.tag, new_face_id_list, new_outsign_list);
+                }
             }
         }
-        boundaries = new_boundaries;
+        if (!openFoam) { boundaries = new_boundaries; }
 
         //
         // Merge the other boundary sets into the master collection.
@@ -2394,8 +2399,12 @@ public:
                     }
                 }
             }
-            if (new_face_id_list.length!=0){
+            if (openFoam) {
                 boundaries ~= new BoundaryFaceSet(b.tag, new_face_id_list, new_outsign_list);
+            } else {
+                if (new_face_id_list.length!=0){
+                    boundaries ~= new BoundaryFaceSet(b.tag, new_face_id_list, new_outsign_list);
+                }
             }
         }
         // Need to update nboundaries after adding new boundaries

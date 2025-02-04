@@ -2,42 +2,89 @@
 // 2021-04-15: extracted from simcore.d
 //
 
-module simcore_exchange;
+module lmr.simcore_exchange;
 
-import std.math;
-import std.stdio;
-import std.file;
-import std.conv;
-import std.array;
-import std.format;
-import std.string;
 import std.algorithm;
+import std.array;
+import std.conv;
+import std.file;
+import std.format;
+import std.math;
 import std.parallelism;
-import ntypes.complex;
-import nm.number;
+import std.stdio;
+import std.string;
 
-import geom;
-import geom.misc.kdtree;
 import gas;
-import globalconfig;
-import globaldata;
-import flowstate;
-import fluidblock;
-import sfluidblock;
-import ufluidblock;
-import ssolidblock;
-import solidfvinterface;
-import solid_full_face_copy;
-import solid_gas_full_face_copy;
-import bc.ghost_cell_effect.gas_solid_full_face_copy;
-import bc;
-import user_defined_source_terms;
-import solid_udf_source_terms;
-import grid_motion;
-import grid_motion_udf;
-import grid_motion_shock_fitting;
+import geom.misc.kdtree;
+import geom;
+import nm.number;
+import ntypes.complex;
+
+import lmr.bc.ghost_cell_effect.gas_solid_full_face_copy;
+import lmr.bc;
+import lmr.flowstate;
+import lmr.fluidblock;
+import lmr.globalconfig;
+import lmr.globaldata;
+import lmr.grid_motion;
+import lmr.grid_motion_shock_fitting;
+import lmr.grid_motion_udf;
+import lmr.sfluidblock;
+import lmr.solid.solid_full_face_copy;
+import lmr.solid.solid_gas_full_face_copy;
+import lmr.solid.solid_udf_source_terms;
+import lmr.solid.solidfvinterface;
+import lmr.solid.ssolidblock;
+import lmr.ufluidblock;
+import lmr.user_defined_source_terms;
+
 version(mpi_parallel) {
     import mpi;
+}
+
+void exchange_vertex_positions(int gtl)
+{
+    bool mpi = GlobalConfig.in_mpi_context;
+    int n_ranks = (mpi) ? GlobalConfig.mpi_size : 1;
+    foreach (active_sending_rank; 0 .. n_ranks) {
+        foreach (blk; localFluidBlocks) {
+            foreach (bc; blk.bc) {
+                if (bc.vertex_exchange) {
+                    int other_block = bc.vertex_exchange.other_blk.id;
+                    int other_rank = (mpi) ? GlobalConfig.mpi_rank_for_block[other_block] : 0;
+                    if (other_rank == active_sending_rank) {
+                        bc.vertex_exchange.exchange_vertex_pos_phase0(gtl);
+                    }
+                }
+            }
+        }
+        foreach (blk; localFluidBlocks) {
+            int this_rank = (mpi) ? GlobalConfig.mpi_rank_for_block[blk.id] : 0;
+            if (this_rank != active_sending_rank) continue;
+            foreach (bc; blk.bc) {
+                if (bc.vertex_exchange) {
+                    bc.vertex_exchange.exchange_vertex_pos_phase1(gtl);
+                }
+            }
+        }
+        foreach (blk; localFluidBlocks) {
+            foreach (bc; blk.bc) {
+                if (bc.vertex_exchange) {
+                    int other_block = bc.vertex_exchange.other_blk.id;
+                    int other_rank = (mpi) ? GlobalConfig.mpi_rank_for_block[other_block] : 0;
+                    if (other_rank == active_sending_rank) {
+                        bc.vertex_exchange.exchange_vertex_pos_phase2(gtl);
+                    }
+                }
+            }
+        }
+        version(mpi_parallel) { MPI_Barrier(MPI_COMM_WORLD); }
+    }
+
+    foreach (blk; localFluidBlocks) {
+        blk.compute_primary_cell_geometric_data(gtl);
+        blk.compute_least_squares_setup(gtl);
+    }
 }
 
 void exchange_ghost_cell_geometry_data()

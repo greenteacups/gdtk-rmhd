@@ -3,21 +3,27 @@ Modular Turbulence Modelling Interface
 
 @author: Nick N. Gibbons (n.gibbons@uq.edu.au)
 */
+
+module lmr.turbulence;
+
 import std.conv;
+import std.json;
 import std.math;
 import std.stdio;
 import std.string;
-import std.json;
-import flowstate;
-import flowgradients;
+
 import gas;
-import json_helper;
+import geom;
 import nm.number;
 import ntypes.complex;
-import globalconfig;
-import geom;
+import util.json_helper;
+
+import lmr.flowgradients;
+import lmr.flowstate;
 import lmr.fluidfvcell;
-import fvinterface;
+import lmr.fvinterface;
+import lmr.globalconfig;
+
 
 /*
 Abstract base class defines functions all turbulence models must have:
@@ -323,7 +329,7 @@ class kwTurbulenceModel : TurbulenceModel {
         P_W = alpha * omega / fmax(tke, small_tke) * P_K +
             sigma_d * fs.gas.rho / fmax(omega, small_omega) * cross_diff;
 
-        X_w = fabs(WWS / pow(beta_star*omega, 3)) ;
+        X_w = fabs(WWS / pow(beta_star*fmax(omega, small_omega), 3)) ;
         f_beta = (1.0 + 85.0 * X_w) / (1.0 + 100.0 * X_w) ;
         beta = beta_0 * f_beta;
         D_W = beta * fs.gas.rho * omega * omega;

@@ -3,49 +3,50 @@
 // 2021-04-14
 //
 
-module simcore_gasdynamic_step;
+module lmr.simcore_gasdynamic_step;
 
-import std.math;
-import std.stdio;
-import std.file;
-import std.conv;
-import std.array;
-import std.format;
-import std.string;
 import std.algorithm;
+import std.array;
+import std.conv;
+import std.file;
+import std.format;
+import std.math;
 import std.parallelism;
-import ntypes.complex;
-import nm.number;
-import nm.bbla;
-import nm.schedule;
+import std.stdio;
+import std.string;
 
-import geom;
-import geom.misc.kdtree;
 import gas;
-import conservedquantities;
-import globalconfig;
-import globaldata;
-import flowstate;
-import fluidblock;
-import sfluidblock;
-import ufluidblock;
-import ssolidblock;
-import solidfvinterface;
-import solid_full_face_copy;
-import solid_gas_full_face_copy;
-import bc.ghost_cell_effect.gas_solid_full_face_copy;
-import bc;
-import user_defined_source_terms;
-import solid_udf_source_terms;
-import grid_motion;
-import grid_motion_udf;
-import grid_motion_shock_fitting;
+import geom.misc.kdtree;
+import geom;
+import nm.bbla;
+import nm.number;
+import nm.schedule;
+import ntypes.complex;
+
+import lmr.bc.ghost_cell_effect.gas_solid_full_face_copy;
+import lmr.bc;
+import lmr.conservedquantities;
+import lmr.flowstate;
+import lmr.fluidblock;
+import lmr.globalconfig;
+import lmr.globaldata;
+import lmr.grid_motion;
+import lmr.grid_motion_shock_fitting;
+import lmr.grid_motion_udf;
+import lmr.sfluidblock;
+import lmr.solid.solid_full_face_copy;
+import lmr.solid.solid_gas_full_face_copy;
+import lmr.solid.solid_udf_source_terms;
+import lmr.solid.solidfvinterface;
+import lmr.solid.ssolidblock;
+import lmr.ufluidblock;
+import lmr.user_defined_source_terms;
+
 version(mpi_parallel) {
     import mpi;
 }
 version(FSI) { import fsi; }
-import simcore_exchange;
-
+import lmr.simcore_exchange;
 
 // To avoid race conditions, there are a couple of locations where
 // each block will put its result into the following arrays,
@@ -302,6 +303,7 @@ void sts_gasdynamic_explicit_increment_with_fixed_grid()
     shared int gtl = 0; // grid time-level remains at zero for the non-moving grid
 
     // Preparation for the inviscid gas-dynamic flow update.
+    if (GlobalConfig.conductivity_model) { evaluate_electrical_conductivity(); }
     if (GlobalConfig.udf_source_terms) {
         foreach (i, blk; parallel(localFluidBlocksBySize,1)) {
             if (!blk.active) continue;
@@ -575,6 +577,7 @@ void sts_gasdynamic_explicit_increment_with_fixed_grid()
         ftl = 1;
 
         // Preparation for the inviscid gas-dynamic flow update.
+        if (GlobalConfig.conductivity_model) { evaluate_electrical_conductivity(); }
         if (GlobalConfig.udf_source_terms && GlobalConfig.eval_udf_source_terms_at_each_stage) {
             foreach (i, blk; parallel(localFluidBlocksBySize,1)) {
                 if (!blk.active) continue;
@@ -963,6 +966,7 @@ void gasdynamic_explicit_increment_with_fixed_grid()
             default: throw new Error("Invalid state for explicit update.");
             }
             // Phase 01 LOCAL
+            if (GlobalConfig.conductivity_model) { evaluate_electrical_conductivity(); }
             if (GlobalConfig.udf_source_terms &&
                 ((stage == 1) || GlobalConfig.eval_udf_source_terms_at_each_stage)) {
                 foreach (i, blk; parallel(localFluidBlocksBySize,1)) {
@@ -1156,20 +1160,9 @@ void gasdynamic_explicit_increment_with_fixed_grid()
                             foreach (j; 0 .. cqi.n) {
                                 U1[j] = U0[j] + dt*gamma_1*dUdt0[j];
                             }
-                            version(turbulence) {
-                                foreach(j; 0 .. cqi.n_turb){
-                                    U1[cqi.rhoturb+j] = fmax(U1[cqi.rhoturb+j], U0[cqi.mass] * blk.myConfig.turb_model.turb_limits(j));
-                                }
-                                // ...assuming a minimum value of 1.0 for omega
-                                // It may occur (near steps in the wall) that a large flux of romega
-                                // through one of the cell interfaces causes romega within the cell
-                                // to drop rapidly.
-                                // The large values of omega come from Menter's near-wall correction that may be
-                                // applied outside the control of this finite-volume core code.
-                                // These large values of omega will be convected along the wall and,
-                                // if they are convected past a corner with a strong expansion,
-                                // there will be an unreasonably-large flux out of the cell.
-                            }
+                            // Limits on the turbulent conserved quantities removed by NNG (22/01/25).
+                            // This was prompted by an issue with lmr, caused by the cqi.mass
+                            // not being defined in reacting simulations.
                             version(MHD) {
                                 if (blk.myConfig.MHD && blk.myConfig.divergence_cleaning && !blk.myConfig.MHD_static_field) {
                                     U1[cqi.psi] *= cell.divergence_damping_factor(dt, blk.myConfig.c_h, blk.myConfig.divB_damping_length);
@@ -1207,11 +1200,7 @@ void gasdynamic_explicit_increment_with_fixed_grid()
                             foreach (j; 0 .. cqi.n) {
                                 U2[j] = U_old[j] + dt*(gamma_1*dUdt0[j] + gamma_2*dUdt1[j]);
                             }
-                            version(turbulence) {
-                                foreach(j; 0 .. cqi.n_turb){
-                                    U2[cqi.rhoturb+j] = fmax(U2[cqi.rhoturb+j], U_old[cqi.mass] * blk.myConfig.turb_model.turb_limits(j));
-                                }
-                            }
+                            // Limits on the turbulent conserved quantities removed by NNG (22/01/25).
                             version(MHD) {
                                 if (blk.myConfig.MHD && blk.myConfig.divergence_cleaning && !blk.myConfig.MHD_static_field) {
                                     U2[cqi.psi] *= cell.divergence_damping_factor(dt, blk.myConfig.c_h, blk.myConfig.divB_damping_length);
@@ -1260,11 +1249,7 @@ void gasdynamic_explicit_increment_with_fixed_grid()
                             foreach (j; 0 .. cqi.n) {
                                 U3[j] = U_old[j] + dt * (gamma_1*dUdt0[j] + gamma_2*dUdt1[j] + gamma_3*dUdt2[j]);
                             }
-                            version(turbulence) {
-                                foreach(j; 0 .. cqi.n_turb){
-                                    U3[cqi.rhoturb+j] = fmax(U3[cqi.rhoturb+j], U_old[cqi.mass] * blk.myConfig.turb_model.turb_limits(j));
-                                }
-                            }
+                            // Limits on the turbulent conserved quantities removed by NNG (22/01/25).
                             version(MHD) {
                                 if (blk.myConfig.MHD && blk.myConfig.divergence_cleaning && !blk.myConfig.MHD_static_field) {
                                     U3[cqi.psi] *= cell.divergence_damping_factor(dt, blk.myConfig.c_h, blk.myConfig.divB_damping_length);
@@ -1307,11 +1292,7 @@ void gasdynamic_explicit_increment_with_fixed_grid()
                             foreach (j; 0 .. cqi.n) {
                                 U4[j] = U_old[j] + dt * (gamma_1*dUdt0[j] + gamma_2*dUdt1[j] + gamma_3*dUdt2[j] + gamma_4 * dUdt3[j]);
                             }
-                            version(turbulence) {
-                                foreach(j; 0 .. cqi.n_turb){
-                                    U4[cqi.rhoturb+j] = fmax(U4[cqi.rhoturb+j], U_old[cqi.mass] * blk.myConfig.turb_model.turb_limits(j));
-                                }
-                            }
+                            // Limits on the turbulent conserved quantities removed by NNG (22/01/25).
                             version(MHD) {
                                 if (blk.myConfig.MHD && blk.myConfig.divergence_cleaning && !blk.myConfig.MHD_static_field) {
                                     U4[cqi.psi] *= cell.divergence_damping_factor(dt, blk.myConfig.c_h, blk.myConfig.divB_damping_length);
@@ -1499,6 +1480,7 @@ void gasdynamic_explicit_increment_with_moving_grid()
     shared int gtl = 0; // grid time-level
     int step_failed = 0; // Use int because we want to reduce across MPI ranks.
     // Phase 00a LOCAL
+    if (GlobalConfig.conductivity_model) { evaluate_electrical_conductivity(); }
     if (GlobalConfig.udf_source_terms) {
         try {
             foreach (i, blk; parallel(localFluidBlocksBySize,1)) {
@@ -1646,7 +1628,7 @@ void gasdynamic_explicit_increment_with_moving_grid()
         // Phase 05a LOCAL
         try {
             foreach (blk; parallel(localFluidBlocksBySize,1)) {
-                if (blk.active) { blk.convective_flux_phase0(allow_high_order_interpolation, gtl); }
+                if (blk.active) { blk.convective_flux_phase0_legacy(allow_high_order_interpolation, gtl); }
             }
         } catch (Exception e) {
             debug { writefln("Exception thrown in phase 05a of stage 1 of explicit update on moving grid: %s", e.msg); }
@@ -1836,11 +1818,7 @@ void gasdynamic_explicit_increment_with_moving_grid()
                     foreach (j; 0 .. cqi.n) {
                         U1[j] = vr*(U0[j] + dt*dUdt0[j]);
                     }
-                    version(turbulence) {
-                        foreach(j; 0 .. cqi.n_turb){
-                            U1[cqi.rhoturb+j] = fmax(U1[cqi.rhoturb+j], U1[cqi.mass] * blk.myConfig.turb_model.turb_limits(j));
-                        }
-                    }
+                    // Limits on the turbulent conserved quantities removed by NNG (22/01/25).
                     version(MHD) {
                         if (blk.myConfig.MHD && blk.myConfig.divergence_cleaning && !blk.myConfig.MHD_static_field) {
                             U1[cqi.psi] *= cell.divergence_damping_factor(dt, blk.myConfig.c_h, blk.myConfig.divB_damping_length);
@@ -1998,7 +1976,7 @@ void gasdynamic_explicit_increment_with_moving_grid()
                     if (sblk.active) { sblk.applyPostFluxAction(SimState.time, ftl); }
                 }
                 foreach (blk; parallel(localFluidBlocksBySize,1)) {
-                    if (blk.active) { blk.convective_flux_phase0(allow_high_order_interpolation, 0); } // note 0 rather then gtl
+                    if (blk.active) { blk.convective_flux_phase0_legacy(allow_high_order_interpolation, 0); } // note 0 rather then gtl
                 }
             } catch (Exception e) {
                 debug { writefln("Exception thrown in phase 03 of stage 2 of explicit update on moving grid: %s", e.msg); }
@@ -2198,11 +2176,7 @@ void gasdynamic_explicit_increment_with_moving_grid()
                         foreach (j; 0 .. cqi.n) {
                             U2[j] = vol_inv * (v_old * U0[j] + dt * (gamma_1 * dUdt0[j] + gamma_2 * dUdt1[j]));
                         }
-                        version(turbulence) {
-                            foreach(j; 0 .. cqi.n_turb){
-                                U2[cqi.rhoturb+j] = fmax(U2[cqi.rhoturb+j], U2[cqi.mass] * blk.myConfig.turb_model.turb_limits(j));
-                            }
-                        }
+                        // Limits on the turbulent conserved quantities removed by NNG (22/01/25).
                         version(MHD) {
                             if (blk.myConfig.MHD && blk.myConfig.divergence_cleaning && !blk.myConfig.MHD_static_field) {
                                 U2[cqi.psi] *= cell.divergence_damping_factor(dt, blk.myConfig.c_h, blk.myConfig.divB_damping_length);
@@ -2345,6 +2319,7 @@ void gasdynamic_implicit_increment_with_fixed_grid()
     immutable int gtl0 = 0; // grid time-level remains at zero for the non-moving grid
     int step_failed = 0; // Use int because we want to reduce across MPI ranks.
     //
+    if (GlobalConfig.conductivity_model) { evaluate_electrical_conductivity(); }
     if (GlobalConfig.udf_source_terms) {
         // Phase 00 LOCAL
         try {
@@ -2531,11 +2506,7 @@ void gasdynamic_implicit_increment_with_fixed_grid()
                     gaussJordanElimination!double(blk.crhs);
                     foreach (j; 0 .. cqi.n) { U1[j] = U0[j] + M*blk.crhs[j,cqi.n]; }
                     //
-                    version(turbulence) {
-                        foreach(j; 0 .. cqi.n_turb){
-                            U1[cqi.rhoturb+j] = fmax(U1[cqi.rhoturb+j], U0[cqi.mass] * blk.myConfig.turb_model.turb_limits(j));
-                        }
-                    }
+                    // Limits on the turbulent conserved quantities removed by NNG (22/01/25).
                     // [TODO] PJ 2021-05-15 MHD bits
                     cell.decode_conserved(gtl0, ftl1, blk.omegaz);
                 }
@@ -2699,6 +2670,7 @@ void gasdynamic_implicit_increment_with_moving_grid()
     immutable int gtl1 = 1;
     int step_failed = 0; // Use int because we want to reduce across MPI ranks.
     //
+    if (GlobalConfig.conductivity_model) { evaluate_electrical_conductivity(); }
     if (GlobalConfig.udf_source_terms) {
         // Phase 00 LOCAL
         try {
@@ -2946,11 +2918,7 @@ void gasdynamic_implicit_increment_with_moving_grid()
                     double vr = cell.volume[gtl0].re / cell.volume[gtl1].re;
                     foreach (k; 0 .. cqi.n) { U1[k] = to!number(vr*(U0[k].re + M*blk.crhs[k,cqi.n])); }
                     //
-                    version(turbulence) {
-                        foreach(k; 0 .. cqi.n_turb){
-                            U1[cqi.rhoturb+k] = fmax(U1[cqi.rhoturb+k], U1[cqi.mass] * blk.myConfig.turb_model.turb_limits(k));
-                        }
-                    }
+                    // Limits on the turbulent conserved quantities removed by NNG (22/01/25).
                     // [TODO] PJ 2021-05-15 MHD bits
                     cell.decode_conserved(gtl1, ftl1, blk.omegaz);
                 }
@@ -3109,6 +3077,16 @@ void gasdynamic_implicit_increment_with_moving_grid()
 
 
 //---------------------------------------------------------------------------
+
+
+void evaluate_electrical_conductivity()
+{
+    foreach (blk; parallel(localFluidBlocksBySize,1)) {
+        if (blk.active) {
+            blk.evaluate_electrical_conductivity();
+        }
+    }
+}
 
 void detect_shocks(int gtl, int ftl)
 // calculate if faces/cells are considered to be influenced by a discontinuity

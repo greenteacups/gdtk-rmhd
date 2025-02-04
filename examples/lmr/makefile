@@ -5,8 +5,11 @@ PYTEST := $(or $(PYTEST), pytest-3)
 test:
 	PYTHONDONTWRITEBYTECODE=1 $(PYTEST) -v
 
+quick-test:
+	PYTHONDONTWRITEBYTECODE=1 $(PYTEST) -v -m short
+
 examples-listing.adoc: elc.adoc
-	asciidoctor-reducer -o $@ $<
+	asciidoctor-reducer $< | awk -f insert-imagesdir.awk > $@
 
 examples-listing.html: examples-listing.adoc
 	asciidoctor $<

@@ -1,24 +1,25 @@
 // flow_state_copy_from_history.d
 
-module bc.ghost_cell_effect.flow_state_copy_from_history;
+module lmr.bc.ghost_cell_effect.flow_state_copy_from_history;
 
-import std.json;
-import std.string;
 import std.conv;
-import std.stdio;
-import std.math;
 import std.file;
+import std.json;
+import std.math;
+import std.stdio;
+import std.string;
 
-import geom;
-import globalconfig;
-import globaldata;
-import flowstate;
-import fvinterface;
-import lmr.fluidfvcell;
-import fluidblock;
-import sfluidblock;
 import gas;
-import bc;
+import geom;
+
+import lmr.bc;
+import lmr.flowstate;
+import lmr.fluidblock;
+import lmr.fluidfvcell;
+import lmr.fvinterface;
+import lmr.globalconfig;
+import lmr.globaldata;
+import lmr.sfluidblock;
 
 
 class GhostCellFlowStateCopyFromHistory : GhostCellEffect {
@@ -45,8 +46,7 @@ public:
     {
         FluidFVCell ghost0;
         BoundaryCondition bc = blk.bc[which_boundary];
-        auto gmodel = blk.myConfig.gmodel;
-        fhistory.set_flowstate(my_fs, t, gmodel);
+        fhistory.set_flowstate(my_fs, t, blk.myConfig);
         foreach (i, f; bc.faces) {
             ghost0 = (bc.outsigns[i] == 1) ? f.right_cell : f.left_cell;
             ghost0.fs.copy_values_from(my_fs);
@@ -62,8 +62,7 @@ public:
     override void apply_structured_grid(double t, int gtl, int ftl)
     {
         BoundaryCondition bc = blk.bc[which_boundary];
-        auto gmodel = blk.myConfig.gmodel;
-        fhistory.set_flowstate(my_fs, t, gmodel);
+        fhistory.set_flowstate(my_fs, t, blk.myConfig);
         foreach (i, f; bc.faces) {
             foreach (n; 0 .. blk.n_ghost_cell_layers) {
                 auto ghost = (bc.outsigns[i] == 1) ? f.right_cells[n] : f.left_cells[n];

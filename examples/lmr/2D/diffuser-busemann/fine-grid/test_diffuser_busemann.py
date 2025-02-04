@@ -13,6 +13,7 @@ import subprocess
 import re
 import os
 import shlex
+import sys
 
 # This is used to change to local directory so that subprocess runs nicely.
 @pytest.fixture(autouse=True)
@@ -20,8 +21,20 @@ def change_test_dir(request, monkeypatch):
     monkeypatch.chdir(request.fspath.dirname)
 
 expected_reason_for_stop = "relative-global-residual-target"
-expected_number_steps = 39
 expected_final_cfl = 1.000e+03
+# RJG, 2025-01-14
+# The expected number of steps differs on linux and macos due to
+# floating-point precision subtleties. This affects growth of
+# CFL and the test for convergence based on relative residuals.
+#
+# Values for MacOs
+# ----------------
+# Compiler: LLVM D Compiler v1.40.0 with LLVM 19.1.6
+# CPU: Apple M2 Pro
+if (sys.platform == 'linux'):
+    expected_number_steps = 39
+else:
+    expected_number_steps = 46
 
 def expected_output(proc, check_start_step=False):
     steps = 0
@@ -34,7 +47,7 @@ def expected_output(proc, check_start_step=False):
             steps = int(line.split()[1])
         if line.find("FINAL-CFL") != -1:
             cfl = float(line.split()[1])
-    assert steps == expected_number_steps, "Failed to take correct number of steps."
+    assert abs(steps - expected_number_steps)<2, "Failed to take correct number of steps."
     assert reason == expected_reason_for_stop, "Failed to stop for the expected reason."
     assert abs(cfl - expected_final_cfl)/expected_final_cfl < 0.005, \
         "Failed to arrive at expected CFL value on final step."

@@ -3,7 +3,7 @@
 // RG & PJ 2015-12-03 : first hack
 //         2018-01-20 : refactor into a package
 
-module bc.ghost_cell_effect.ghost_cell;
+module lmr.bc.ghost_cell_effect.ghost_cell;
 
 import std.json;
 import std.string;
@@ -16,17 +16,19 @@ version(mpi_parallel) {
     import mpi;
 }
 
-import geom;
-import json_helper;
-import globalconfig;
-import globaldata;
-import flowstate;
-import fvinterface;
-import fluidblock;
-import sfluidblock;
+import lmr.bc.ghost_cell_effect.gas_solid_full_face_copy;
+import lmr.bc;
+import lmr.flowstate;
+import lmr.fluidblock;
+import lmr.fvinterface;
+import lmr.globalconfig;
+import lmr.globaldata;
+import lmr.sfluidblock;
+
 import gas;
-import bc;
-import bc.ghost_cell_effect.gas_solid_full_face_copy;
+import geom;
+import util.json_helper;
+
 
 @nogc
 void reflect_normal_velocity(ref FlowState fs, in FVInterface IFace)
@@ -88,10 +90,15 @@ GhostCellEffect make_GCE_from_json(JSONValue jsonData, int blk_id, int boundary)
         double r = getJSONdouble(jsonData, "r", 0.0);
         newGCE = new GhostCellFlowStateCopy(blk_id, boundary, flowstate, x0, y0, z0, r);
         break;
-    case "flowstate_copy_from_profile":
+    case "flowstate_copy_from_static_profile":
         string fname = getJSONstring(jsonData, "filename", "");
         string match = getJSONstring(jsonData, "match", "xyz");
-        newGCE = new GhostCellFlowStateCopyFromProfile(blk_id, boundary, fname, match);
+        newGCE = new GhostCellFlowStateCopyFromStaticProfile(blk_id, boundary, fname, match);
+        break;
+    case "flowstate_copy_from_transient_profile":
+        string fname = getJSONstring(jsonData, "filename", "");
+        string match = getJSONstring(jsonData, "match", "xyz");
+        newGCE = new GhostCellFlowStateCopyFromTransientProfile(blk_id, boundary, fname, match);
         break;
     case "flowstate_copy_from_history":
         string fname = getJSONstring(jsonData, "filename", "");

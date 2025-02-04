@@ -1,39 +1,40 @@
 // solid_gas_full_face_copy.d
 
-module solid_gas_full_face_copy;
+module lmr.solid.solid_gas_full_face_copy;
 
-import std.json;
-import std.string;
-import std.conv;
-import std.stdio;
-import std.math;
-import std.file;
 import std.algorithm;
+import std.conv;
 import std.datetime;
+import std.file;
+import std.json;
+import std.math;
+import std.stdio;
+import std.string;
 version(mpi_parallel) {
     import mpi;
 }
 
+import gas;
+import geom;
 import nm.number;
 import ntypes.complex;
-import geom;
-import json_helper;
-import globalconfig;
-import globaldata;
-import flowstate;
-import fvinterface;
-import lmr.fluidfvcell;
+import util.json_helper;
+
+import lmr.bc;
 import lmr.coredata;
-import fluidblock;
-import sfluidblock;
-import ssolidblock;
-import solidfvcell;
-import solidfvinterface;
-import gas;
-import bc;
-import solid_ghost_cell;
-import solidbc;
-import flowgradients;
+import lmr.flowgradients;
+import lmr.flowstate;
+import lmr.fluidblock;
+import lmr.fluidfvcell;
+import lmr.fvinterface;
+import lmr.globalconfig;
+import lmr.globaldata;
+import lmr.sfluidblock;
+import lmr.solid.solid_ghost_cell;
+import lmr.solid.solidbc;
+import lmr.solid.solidfvcell;
+import lmr.solid.solidfvinterface;
+import lmr.solid.ssolidblock;
 
 
 // ----------------------------------------------------------------------------------
@@ -168,9 +169,15 @@ public:
             case Face.north:
                 j_dest = this_blk.jmax;  // index of the north-most plane of active cells
                 myBC.celldata.U0.length = (this_blk.nicell)*neq;
-                myBC.celldata.U1.length = (this_blk.nicell)*neq;
+                if (nftl>1) myBC.celldata.U1.length = (this_blk.nicell)*neq;
+                if (nftl>2) myBC.celldata.U2.length = (this_blk.nicell)*neq;
+                if (nftl>3) myBC.celldata.U3.length = (this_blk.nicell)*neq;
+                if (nftl>4) myBC.celldata.U4.length = (this_blk.nicell)*neq;
                 myBC.celldata.dUdt0.length = (this_blk.nicell)*neq;
-                myBC.celldata.dUdt1.length = (this_blk.nicell)*neq;
+                if (nftl>1) myBC.celldata.dUdt1.length = (this_blk.nicell)*neq;
+                if (nftl>2) myBC.celldata.dUdt2.length = (this_blk.nicell)*neq;
+                if (nftl>3) myBC.celldata.dUdt3.length = (this_blk.nicell)*neq;
+                if (nftl>4) myBC.celldata.dUdt4.length = (this_blk.nicell)*neq;
                 myBC.celldata.source_terms.length = (this_blk.nicell)*neq;
                 myBC.celldata.flowstates.reserve(this_blk.nicell);
                 myBC.celldata.gradients.reserve(this_blk.nicell);
@@ -211,10 +218,16 @@ public:
                 break;
             case Face.east:
                 i_dest = this_blk.imax;  // index of the east-most plane of active cells
-                myBC.celldata.U0.length           = (this_blk.njcell)*neq;
-                myBC.celldata.U1.length           = (this_blk.njcell)*neq;
-                myBC.celldata.dUdt0.length        = (this_blk.njcell)*neq;
-                myBC.celldata.dUdt1.length        = (this_blk.njcell)*neq;
+                myBC.celldata.U0.length = (this_blk.njcell)*neq;
+                if (nftl>1) myBC.celldata.U1.length = (this_blk.njcell)*neq;
+                if (nftl>2) myBC.celldata.U2.length = (this_blk.njcell)*neq;
+                if (nftl>3) myBC.celldata.U3.length = (this_blk.njcell)*neq;
+                if (nftl>4) myBC.celldata.U4.length = (this_blk.njcell)*neq;
+                myBC.celldata.dUdt0.length = (this_blk.njcell)*neq;
+                if (nftl>1) myBC.celldata.dUdt1.length = (this_blk.njcell)*neq;
+                if (nftl>2) myBC.celldata.dUdt2.length = (this_blk.njcell)*neq;
+                if (nftl>3) myBC.celldata.dUdt3.length = (this_blk.njcell)*neq;
+                if (nftl>4) myBC.celldata.dUdt4.length = (this_blk.njcell)*neq;
                 myBC.celldata.source_terms.length = (this_blk.njcell)*neq;
                 myBC.celldata.flowstates.reserve(this_blk.njcell);
                 myBC.celldata.gradients.reserve(this_blk.njcell);
@@ -255,10 +268,16 @@ public:
                 break;
             case Face.south:
                 j_dest = this_blk.jmin;  // index of the south-most plane of active cells
-                myBC.celldata.U0.length           = (this_blk.nicell)*neq;
-                myBC.celldata.U1.length           = (this_blk.nicell)*neq;
-                myBC.celldata.dUdt0.length        = (this_blk.nicell)*neq;
-                myBC.celldata.dUdt1.length        = (this_blk.nicell)*neq;
+                myBC.celldata.U0.length = (this_blk.nicell)*neq;
+                if (nftl>1) myBC.celldata.U1.length = (this_blk.nicell)*neq;
+                if (nftl>2) myBC.celldata.U2.length = (this_blk.nicell)*neq;
+                if (nftl>3) myBC.celldata.U3.length = (this_blk.nicell)*neq;
+                if (nftl>4) myBC.celldata.U4.length = (this_blk.nicell)*neq;
+                myBC.celldata.dUdt0.length = (this_blk.nicell)*neq;
+                if (nftl>1) myBC.celldata.dUdt1.length = (this_blk.nicell)*neq;
+                if (nftl>2) myBC.celldata.dUdt2.length = (this_blk.nicell)*neq;
+                if (nftl>3) myBC.celldata.dUdt3.length = (this_blk.nicell)*neq;
+                if (nftl>4) myBC.celldata.dUdt4.length = (this_blk.nicell)*neq;
                 myBC.celldata.source_terms.length = (this_blk.nicell)*neq;
                 myBC.celldata.flowstates.reserve(this_blk.nicell);
                 myBC.celldata.gradients.reserve(this_blk.nicell);
@@ -299,10 +318,16 @@ public:
                 break;
             case Face.west:
                 i_dest = this_blk.imin;  // index of the west-most plane of active cells
-                myBC.celldata.U0.length           = (this_blk.njcell)*neq;
-                myBC.celldata.U1.length           = (this_blk.njcell)*neq;
-                myBC.celldata.dUdt0.length        = (this_blk.njcell)*neq;
-                myBC.celldata.dUdt1.length        = (this_blk.njcell)*neq;
+                myBC.celldata.U0.length = (this_blk.njcell)*neq;
+                if (nftl>1) myBC.celldata.U1.length = (this_blk.njcell)*neq;
+                if (nftl>2) myBC.celldata.U2.length = (this_blk.njcell)*neq;
+                if (nftl>3) myBC.celldata.U3.length = (this_blk.njcell)*neq;
+                if (nftl>4) myBC.celldata.U4.length = (this_blk.njcell)*neq;
+                myBC.celldata.dUdt0.length = (this_blk.njcell)*neq;
+                if (nftl>1) myBC.celldata.dUdt1.length = (this_blk.njcell)*neq;
+                if (nftl>2) myBC.celldata.dUdt2.length = (this_blk.njcell)*neq;
+                if (nftl>3) myBC.celldata.dUdt3.length = (this_blk.njcell)*neq;
+                if (nftl>4) myBC.celldata.dUdt4.length = (this_blk.njcell)*neq;
                 myBC.celldata.source_terms.length = (this_blk.njcell)*neq;
                 myBC.celldata.flowstates.reserve(this_blk.njcell);
                 myBC.celldata.gradients.reserve(this_blk.njcell);
@@ -350,10 +375,16 @@ public:
             final switch (which_boundary) {
             case Face.north:
                 j_dest = this_blk.jmax;  // index of the north-most plane of active cells
-                myBC.celldata.U0.length           = (this_blk.nicell*this_blk.nkcell)*neq;
-                myBC.celldata.U1.length           = (this_blk.nicell*this_blk.nkcell)*neq;
-                myBC.celldata.dUdt0.length        = (this_blk.nicell*this_blk.nkcell)*neq;
-                myBC.celldata.dUdt1.length        = (this_blk.nicell*this_blk.nkcell)*neq;
+                myBC.celldata.U0.length = (this_blk.nicell*this_blk.nkcell)*neq;
+                if (nftl>1) myBC.celldata.U1.length = (this_blk.nicell*this_blk.nkcell)*neq;
+                if (nftl>2) myBC.celldata.U2.length = (this_blk.nicell*this_blk.nkcell)*neq;
+                if (nftl>3) myBC.celldata.U3.length = (this_blk.nicell*this_blk.nkcell)*neq;
+                if (nftl>4) myBC.celldata.U4.length = (this_blk.nicell*this_blk.nkcell)*neq;
+                myBC.celldata.dUdt0.length = (this_blk.nicell*this_blk.nkcell)*neq;
+                if (nftl>1) myBC.celldata.dUdt1.length = (this_blk.nicell*this_blk.nkcell)*neq;
+                if (nftl>2) myBC.celldata.dUdt2.length = (this_blk.nicell*this_blk.nkcell)*neq;
+                if (nftl>3) myBC.celldata.dUdt3.length = (this_blk.nicell*this_blk.nkcell)*neq;
+                if (nftl>4) myBC.celldata.dUdt4.length = (this_blk.nicell*this_blk.nkcell)*neq;
                 myBC.celldata.source_terms.length = (this_blk.nicell*this_blk.nkcell)*neq;
                 myBC.celldata.flowstates.reserve(this_blk.nicell*this_blk.nkcell);
                 myBC.celldata.gradients.reserve(this_blk.nicell*this_blk.nkcell);
@@ -434,10 +465,16 @@ public:
                 break;
             case Face.east:
                 i_dest = this_blk.imax;  // index of the east-most plane of active cells
-                myBC.celldata.U0.length           = (this_blk.njcell*this_blk.nkcell)*neq;
-                myBC.celldata.U1.length           = (this_blk.njcell*this_blk.nkcell)*neq;
-                myBC.celldata.dUdt0.length        = (this_blk.njcell*this_blk.nkcell)*neq;
-                myBC.celldata.dUdt1.length        = (this_blk.njcell*this_blk.nkcell)*neq;
+                myBC.celldata.U0.length = (this_blk.njcell*this_blk.nkcell)*neq;
+                if (nftl>1) myBC.celldata.U1.length = (this_blk.njcell*this_blk.nkcell)*neq;
+                if (nftl>2) myBC.celldata.U2.length = (this_blk.njcell*this_blk.nkcell)*neq;
+                if (nftl>3) myBC.celldata.U3.length = (this_blk.njcell*this_blk.nkcell)*neq;
+                if (nftl>4) myBC.celldata.U4.length = (this_blk.njcell*this_blk.nkcell)*neq;
+                myBC.celldata.dUdt0.length = (this_blk.njcell*this_blk.nkcell)*neq;
+                if (nftl>1) myBC.celldata.dUdt1.length = (this_blk.njcell*this_blk.nkcell)*neq;
+                if (nftl>2) myBC.celldata.dUdt2.length = (this_blk.njcell*this_blk.nkcell)*neq;
+                if (nftl>3) myBC.celldata.dUdt3.length = (this_blk.njcell*this_blk.nkcell)*neq;
+                if (nftl>4) myBC.celldata.dUdt4.length = (this_blk.njcell*this_blk.nkcell)*neq;
                 myBC.celldata.source_terms.length = (this_blk.njcell*this_blk.nkcell)*neq;
                 myBC.celldata.flowstates.reserve(this_blk.njcell*this_blk.nkcell);
                 myBC.celldata.gradients.reserve(this_blk.njcell*this_blk.nkcell);
@@ -518,10 +555,16 @@ public:
                 break;
             case Face.south:
                 j_dest = this_blk.jmin;  // index of the south-most plane of active cells
-                myBC.celldata.U0.length           = (this_blk.nicell*this_blk.nkcell)*neq;
-                myBC.celldata.U1.length           = (this_blk.nicell*this_blk.nkcell)*neq;
-                myBC.celldata.dUdt0.length        = (this_blk.nicell*this_blk.nkcell)*neq;
-                myBC.celldata.dUdt1.length        = (this_blk.nicell*this_blk.nkcell)*neq;
+                myBC.celldata.U0.length = (this_blk.nicell*this_blk.nkcell)*neq;
+                if (nftl>1) myBC.celldata.U1.length = (this_blk.nicell*this_blk.nkcell)*neq;
+                if (nftl>2) myBC.celldata.U2.length = (this_blk.nicell*this_blk.nkcell)*neq;
+                if (nftl>3) myBC.celldata.U3.length = (this_blk.nicell*this_blk.nkcell)*neq;
+                if (nftl>4) myBC.celldata.U4.length = (this_blk.nicell*this_blk.nkcell)*neq;
+                myBC.celldata.dUdt0.length = (this_blk.nicell*this_blk.nkcell)*neq;
+                if (nftl>1) myBC.celldata.dUdt1.length = (this_blk.nicell*this_blk.nkcell)*neq;
+                if (nftl>2) myBC.celldata.dUdt2.length = (this_blk.nicell*this_blk.nkcell)*neq;
+                if (nftl>3) myBC.celldata.dUdt3.length = (this_blk.nicell*this_blk.nkcell)*neq;
+                if (nftl>4) myBC.celldata.dUdt4.length = (this_blk.nicell*this_blk.nkcell)*neq;
                 myBC.celldata.source_terms.length = (this_blk.nicell*this_blk.nkcell)*neq;
                 myBC.celldata.flowstates.reserve(this_blk.nicell*this_blk.nkcell);
                 myBC.celldata.gradients.reserve(this_blk.nicell*this_blk.nkcell);
@@ -602,10 +645,16 @@ public:
                 break;
             case Face.west:
                 i_dest = this_blk.imin;  // index of the west-most plane of active cells
-                myBC.celldata.U0.length           = (this_blk.njcell*this_blk.nkcell)*neq;
-                myBC.celldata.U1.length           = (this_blk.njcell*this_blk.nkcell)*neq;
-                myBC.celldata.dUdt0.length        = (this_blk.njcell*this_blk.nkcell)*neq;
-                myBC.celldata.dUdt1.length        = (this_blk.njcell*this_blk.nkcell)*neq;
+                myBC.celldata.U0.length = (this_blk.njcell*this_blk.nkcell)*neq;
+                if (nftl>1) myBC.celldata.U1.length = (this_blk.njcell*this_blk.nkcell)*neq;
+                if (nftl>2) myBC.celldata.U2.length = (this_blk.njcell*this_blk.nkcell)*neq;
+                if (nftl>3) myBC.celldata.U3.length = (this_blk.njcell*this_blk.nkcell)*neq;
+                if (nftl>4) myBC.celldata.U4.length = (this_blk.njcell*this_blk.nkcell)*neq;
+                myBC.celldata.dUdt0.length = (this_blk.njcell*this_blk.nkcell)*neq;
+                if (nftl>1) myBC.celldata.dUdt1.length = (this_blk.njcell*this_blk.nkcell)*neq;
+                if (nftl>2) myBC.celldata.dUdt1.length = (this_blk.njcell*this_blk.nkcell)*neq;
+                if (nftl>3) myBC.celldata.dUdt1.length = (this_blk.njcell*this_blk.nkcell)*neq;
+                if (nftl>4) myBC.celldata.dUdt1.length = (this_blk.njcell*this_blk.nkcell)*neq;
                 myBC.celldata.source_terms.length = (this_blk.njcell*this_blk.nkcell)*neq;
                 myBC.celldata.flowstates.reserve(this_blk.njcell*this_blk.nkcell);
                 myBC.celldata.gradients.reserve(this_blk.njcell*this_blk.nkcell);
@@ -686,10 +735,16 @@ public:
                 break;
             case Face.top:
                 k_dest = this_blk.kmax;  // index of the top-most plane of active cells
-                myBC.celldata.U0.length           = (this_blk.njcell*this_blk.nicell)*neq;
-                myBC.celldata.U1.length           = (this_blk.njcell*this_blk.nicell)*neq;
-                myBC.celldata.dUdt0.length        = (this_blk.njcell*this_blk.nicell)*neq;
-                myBC.celldata.dUdt1.length        = (this_blk.njcell*this_blk.nicell)*neq;
+                myBC.celldata.U0.length = (this_blk.njcell*this_blk.nicell)*neq;
+                if (nftl>1) myBC.celldata.U1.length = (this_blk.njcell*this_blk.nicell)*neq;
+                if (nftl>2) myBC.celldata.U2.length = (this_blk.njcell*this_blk.nicell)*neq;
+                if (nftl>3) myBC.celldata.U3.length = (this_blk.njcell*this_blk.nicell)*neq;
+                if (nftl>4) myBC.celldata.U4.length = (this_blk.njcell*this_blk.nicell)*neq;
+                myBC.celldata.dUdt0.length = (this_blk.njcell*this_blk.nicell)*neq;
+                if (nftl>1) myBC.celldata.dUdt1.length = (this_blk.njcell*this_blk.nicell)*neq;
+                if (nftl>2) myBC.celldata.dUdt2.length = (this_blk.njcell*this_blk.nicell)*neq;
+                if (nftl>3) myBC.celldata.dUdt3.length = (this_blk.njcell*this_blk.nicell)*neq;
+                if (nftl>4) myBC.celldata.dUdt4.length = (this_blk.njcell*this_blk.nicell)*neq;
                 myBC.celldata.source_terms.length = (this_blk.njcell*this_blk.nicell)*neq;
                 myBC.celldata.flowstates.reserve(this_blk.njcell*this_blk.nicell);
                 myBC.celldata.gradients.reserve(this_blk.njcell*this_blk.nicell);
@@ -770,10 +825,16 @@ public:
                 break;
             case Face.bottom:
                 k_dest = this_blk.kmin;  // index of the bottom-most plane of active cells
-                myBC.celldata.U0.length           = (this_blk.njcell*this_blk.nicell)*neq;
-                myBC.celldata.U1.length           = (this_blk.njcell*this_blk.nicell)*neq;
-                myBC.celldata.dUdt0.length        = (this_blk.njcell*this_blk.nicell)*neq;
-                myBC.celldata.dUdt1.length        = (this_blk.njcell*this_blk.nicell)*neq;
+                myBC.celldata.U0.length = (this_blk.njcell*this_blk.nicell)*neq;
+                if (nftl>1) myBC.celldata.U1.length = (this_blk.njcell*this_blk.nicell)*neq;
+                if (nftl>2) myBC.celldata.U2.length = (this_blk.njcell*this_blk.nicell)*neq;
+                if (nftl>3) myBC.celldata.U3.length = (this_blk.njcell*this_blk.nicell)*neq;
+                if (nftl>4) myBC.celldata.U4.length = (this_blk.njcell*this_blk.nicell)*neq;
+                myBC.celldata.dUdt0.length = (this_blk.njcell*this_blk.nicell)*neq;
+                if (nftl>1) myBC.celldata.dUdt1.length = (this_blk.njcell*this_blk.nicell)*neq;
+                if (nftl>2) myBC.celldata.dUdt2.length = (this_blk.njcell*this_blk.nicell)*neq;
+                if (nftl>3) myBC.celldata.dUdt3.length = (this_blk.njcell*this_blk.nicell)*neq;
+                if (nftl>4) myBC.celldata.dUdt4.length = (this_blk.njcell*this_blk.nicell)*neq;
                 myBC.celldata.source_terms.length = (this_blk.njcell*this_blk.nicell)*neq;
                 myBC.celldata.flowstates.reserve(this_blk.njcell*this_blk.nicell);
                 myBC.celldata.gradients.reserve(this_blk.njcell*this_blk.nicell);
