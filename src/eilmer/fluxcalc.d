@@ -1743,8 +1743,8 @@ void hlle(in FlowState Lft, in FlowState Rght, ref FVInterface IFace, ref LocalC
         number fByR = uR*ByR - vR*BxR;
         number fBzL = uL*BzL - wL*BxL;
         number fBzR = uR*BzR - wR*BxR;
-        number fenergyL = (pL/(gam-1.0)+0.5*(rL*uuL+BBL)+ptL)*uL - (uL*BxL+vL*ByL+wL*BzL)*BxL;
-        number fenergyR = (pR/(gam-1.0)+0.5*(rR*uuR+BBR)+ptR)*uR - (uR*BxR+vR*ByR+wR*BzR)*BxR;
+        number fenergyL = (rL*gmodel.internal_energy(Lft.gas)+0.5*(rL*uuL+BBL)+ptL)*uL - (uL*BxL+vL*ByL+wL*BzL)*BxL;
+        number fenergyR = (rR*gmodel.internal_energy(Rght.gas)+0.5*(rR*uuR+BBR)+ptR)*uR - (uR*BxR+vR*ByR+wR*BzR)*BxR;
         number iden = 1.0/(brp - blm);
         number fac1 = brp*blm;
         //
