@@ -944,7 +944,7 @@ public:
         number Te = T / K_to_eV;
 
         if (molef_e <= 1.0e-4) { // Weakly Ionised Condition
-            sigma = 2.82e-4 * (n_e * 1.0e-6) / (3.9 * 1.0e9 / (P / 133.322)) * 1.0e2;
+            sigma = 2.82e-4 * (n_e * 1.0e-6) / (3.9 * 1.0e9 * (P / 133.322)) * 1.0e2;
 
         } else if (molef_e >= 1.0e-3) { // Strongly Ionised Condition
             // Calculate lnA based on Raizer's formula for strongly ionized plasma
@@ -954,7 +954,7 @@ public:
             sigma = (1.9e2 * pow(Te, 1.5) / lnA) * 100.0; // Conductivity in Ohm-1 m-1
 
         } else { // Intermediate ionisation condition
-            number sigmaw = 2.82e-4 * (n_e * 1.0e-6) / (3.9 * 1.0e9 / (P / 133.322)) * 1.0e2;
+            number sigmaw = 2.82e-4 * (n_e * 1.0e-6) / (3.9 * 1.0e9 * (P / 133.322)) * 1.0e2;
             number lnA = 13.57 + 1.5 * log10(Te) - 0.5 * log10((n_e + 1.0) * 1.0e-6);
             number sigmas = (1.9e2 * pow(Te, 1.5) / lnA) * 100.0;
 
@@ -962,7 +962,7 @@ public:
         }
 
         // Truncate extreme values - Need to verify when this is necessary
-        if(sigma < 10.0) {sigma = 10.0;}
+        if(sigma < 100.0) {sigma = 100.0;}
         if(sigma > 1.0e4) {sigma = 1.0e4;}
 
         number mu0 = 4 * std.math.PI * 1e-7;    // Permeability of free space
@@ -971,10 +971,10 @@ public:
         number L = 1.0; // Characterisitc length scale
         number Rem = 1.0; // Magnetic Reynolds Number
         number u0 = sqrt(fs.vel.x^^2 + fs.vel.y^^2); // Velocity
-        // sigma = Rem/(mu0*u0*L);
+        sigma = 1000.0; //Rem/(mu0*u0*L);
 
         // Calculate Diffusive Flux Terms:
-        number eta = 0.1;     // Diffusivity
+        number eta = 1/(sigma*mu0);     // Diffusivity
 
         number dBxdx = grad.B[0][0] ;
         number dBxdy = grad.B[0][1] ;
@@ -985,15 +985,21 @@ public:
         //if(pos.y > 6.35 || pos.y < -6.35) {dBxdy = 0.0; fs.B.y = 0.0;}
 
         // Calculate diffusion terms
-        number Bxdiffusion = eta * (dBxdy - dBydx) *n.y;
-        number Bydiffusion = eta * (dBydx - dBxdy) *n.x;
+        // Divergence RMHD equations
+        //number Bxdiffusion = eta * (dBxdy*n.y - dBydy*n.x);
+        //number Bydiffusion = eta * (dBydx*n.x - dBxdx*n.y);
+        //number ediffusion = eta * 1/mu0 * (fs.B.y*(dBydx - dBxdy)*n.x -  fs.B.x*(dBydx - dBxdy)*n.y);
+
+        // Divergence-free RMHD equations
+        number Bxdiffusion = eta * (dBxdx*n.x + dBxdy*n.y);
+        number Bydiffusion = eta * (dBydx*n.x + dBydy*n.y);
+
         number ediffusion = eta * 1/mu0 * (fs.B.y*(dBydx - dBxdy)*n.x -  fs.B.x*(dBydx - dBxdy)*n.y);
 
         auto cqi = myConfig.cqi;
         F[cqi.xB] -= Bxdiffusion;
         F[cqi.yB] -= Bydiffusion;
-
-        F[cqi.totEnergy] -= ediffusion;
+        //F[cqi.totEnergy] -= ediffusion;
     }
 
 
