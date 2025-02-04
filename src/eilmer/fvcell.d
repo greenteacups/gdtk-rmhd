@@ -1340,11 +1340,11 @@ public:
         number uy = fs.vel.y;
         number Bx = fs.B.x;
         number By = fs.B.y;
+        //sigma = 1000;
 
-        if (SimState.time > 1.3e-4){
+        if (SimState.time > 0){
             auto cqi = myConfig.cqi;
             number scale = 1.0;
-            if (SimState.time < 1.8e-4){scale = SimState.time / 1.8e-4;}
 
             Q[cqi.xMom] += -sigma*By*(ux*By-uy*Bx) *scale;
             Q[cqi.yMom] += sigma*Bx*(ux*By-uy*Bx) *scale;
