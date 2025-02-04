@@ -67,8 +67,8 @@ void exchange_ghost_cell_geometry_data()
                 if (mygce1) { mygce1.exchange_geometry_phase0(); }
                 auto mygce2 = cast(GhostCellFullFaceCopy) gce;
                 if (mygce2) { mygce2.exchange_geometry_phase0(); }
-                auto mygce3 = cast(GhostCellFullFaceCopyBField) gce;
-                if (mygce3) { mygce3.exchange_geometry_phase0(); }
+                //auto mygce3 = cast(GhostCellFullFaceCopyBField) gce;
+                //if (mygce3) { mygce3.exchange_geometry_phase0(); }
             }
         }
     }
@@ -79,8 +79,8 @@ void exchange_ghost_cell_geometry_data()
                 if (mygce1) { mygce1.exchange_geometry_phase1(); }
                 auto mygce2 = cast(GhostCellFullFaceCopy) gce;
                 if (mygce2) { mygce2.exchange_geometry_phase1(); }
-                auto mygce3 = cast(GhostCellFullFaceCopyBField) gce;
-                if (mygce3) { mygce3.exchange_geometry_phase1(); }
+                //auto mygce3 = cast(GhostCellFullFaceCopyBField) gce;
+                //if (mygce3) { mygce3.exchange_geometry_phase1(); }
             }
         }
     }
@@ -91,8 +91,8 @@ void exchange_ghost_cell_geometry_data()
                 if (mygce1) { mygce1.exchange_geometry_phase2(); }
                 auto mygce2 = cast(GhostCellFullFaceCopy) gce;
                 if (mygce2) { mygce2.exchange_geometry_phase2(); }
-                auto mygce3 = cast(GhostCellFullFaceCopyBField) gce;
-                if (mygce3) { mygce3.exchange_geometry_phase2(); }
+                //auto mygce3 = cast(GhostCellFullFaceCopyBField) gce;
+                //if (mygce3) { mygce3.exchange_geometry_phase2(); }
             }
         }
     }
@@ -115,8 +115,8 @@ void exchange_ghost_cell_boundary_data(double t, int gtl, int ftl)
                 if (mygce1) { mygce1.exchange_flowstate_phase0(t, gtl, ftl); }
                 auto mygce2 = cast(GhostCellFullFaceCopy) gce;
                 if (mygce2) { mygce2.exchange_flowstate_phase0(t, gtl, ftl); }
-                auto mygce3 = cast(GhostCellFullFaceCopyBField) gce;
-                if (mygce3) { mygce3.exchange_flowstate_phase0(t, gtl, ftl); }
+                //auto mygce3 = cast(GhostCellFullFaceCopyBField) gce;
+                //if (mygce3) { mygce3.exchange_flowstate_phase0(t, gtl, ftl); }
             }
         }
     }
@@ -127,8 +127,8 @@ void exchange_ghost_cell_boundary_data(double t, int gtl, int ftl)
                 if (mygce1) { mygce1.exchange_flowstate_phase1(t, gtl, ftl); }
                 auto mygce2 = cast(GhostCellFullFaceCopy) gce;
                 if (mygce2) { mygce2.exchange_flowstate_phase1(t, gtl, ftl); }
-                auto mygce3 = cast(GhostCellFullFaceCopyBField) gce;
-                if (mygce3) { mygce3.exchange_flowstate_phase1(t, gtl, ftl); }
+                //auto mygce3 = cast(GhostCellFullFaceCopyBField) gce;
+                //if (mygce3) { mygce3.exchange_flowstate_phase1(t, gtl, ftl); }
             }
         }
     }
@@ -139,8 +139,8 @@ void exchange_ghost_cell_boundary_data(double t, int gtl, int ftl)
                 if (mygce1) { mygce1.exchange_flowstate_phase2(t, gtl, ftl); }
                 auto mygce2 = cast(GhostCellFullFaceCopy) gce;
                 if (mygce2) { mygce2.exchange_flowstate_phase2(t, gtl, ftl); }
-                auto mygce3 = cast(GhostCellFullFaceCopyBField) gce;
-                if (mygce3) {mygce3.exchange_flowstate_phase2(t, gtl, ftl); }
+                //auto mygce3 = cast(GhostCellFullFaceCopyBField) gce;
+                //if (mygce3) {mygce3.exchange_flowstate_phase2(t, gtl, ftl); }
             }
         }
     }
@@ -274,8 +274,8 @@ void exchange_ghost_cell_boundary_viscous_gradient_data(double t, int gtl, int f
                 if (mygce1) { mygce1.exchange_viscous_gradient_phase0(t, gtl, ftl); }
                 auto mygce2 = cast(GhostCellFullFaceCopy) gce;
                 if (mygce2) { mygce2.exchange_viscous_gradient_phase0(t, gtl, ftl); }
-                auto mygce3 = cast(GhostCellFullFaceCopyBField) gce;
-                if (mygce3) { mygce3.exchange_viscous_gradient_phase0(t, gtl, ftl); }
+                //auto mygce3 = cast(GhostCellFullFaceCopyBField) gce;
+                //if (mygce3) { mygce3.exchange_viscous_gradient_phase0(t, gtl, ftl); }
             }
         }
     }
@@ -286,8 +286,8 @@ void exchange_ghost_cell_boundary_viscous_gradient_data(double t, int gtl, int f
                 if (mygce1) { mygce1.exchange_viscous_gradient_phase1(t, gtl, ftl); }
                 auto mygce2 = cast(GhostCellFullFaceCopy) gce;
                 if (mygce2) { mygce2.exchange_viscous_gradient_phase1(t, gtl, ftl); }
-                auto mygce3 = cast(GhostCellFullFaceCopyBField) gce;
-                if (mygce3) { mygce3.exchange_viscous_gradient_phase1(t, gtl, ftl); }
+                //auto mygce3 = cast(GhostCellFullFaceCopyBField) gce;
+                //if (mygce3) { mygce3.exchange_viscous_gradient_phase1(t, gtl, ftl); }
             }
         }
     }
@@ -298,8 +298,8 @@ void exchange_ghost_cell_boundary_viscous_gradient_data(double t, int gtl, int f
                 if (mygce1) { mygce1.exchange_viscous_gradient_phase2(t, gtl, ftl); }
                 auto mygce2 = cast(GhostCellFullFaceCopy) gce;
                 if (mygce2) { mygce2.exchange_viscous_gradient_phase2(t, gtl, ftl); }
-                auto mygce3 = cast(GhostCellFullFaceCopyBField) gce;
-                if (mygce3) { mygce3.exchange_viscous_gradient_phase2(t, gtl, ftl); }
+                //auto mygce3 = cast(GhostCellFullFaceCopyBField) gce;
+                //if (mygce3) { mygce3.exchange_viscous_gradient_phase2(t, gtl, ftl); }
             }
         }
     }
