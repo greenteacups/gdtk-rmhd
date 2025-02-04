@@ -137,10 +137,10 @@ public:
                 if (blk.myConfig.MHD) {
                     reflect_normal_magnetic_field(dest_cell.fs, f);
                     
-                    //if(dest_cell.pos[0].y < 0.005){
-                        //dest_cell.fs.B.x = -(((0.5)*0.02^^3)/(2*(((dest_cell.pos[0].x -0.05)^^2+(dest_cell.pos[0].y +0.01)^^2)^^0.5)^^5)) * (2*(dest_cell.pos[0].x -0.05)^^2 - (dest_cell.pos[0].y +0.01)^^2);
-                        //dest_cell.fs.B.y = -(((0.5)*0.02^^3)/(2*(((dest_cell.pos[0].x -0.05)^^2+(dest_cell.pos[0].y +0.01)^^2)^^0.5)^^5)) * (3*(dest_cell.pos[0].x -0.05)*(dest_cell.pos[0].y +0.01));
-                    //}
+                    if(dest_cell.pos[0].x > -0.4136 && dest_cell.pos[0].x < 0.4136){
+                        dest_cell.fs.B.x = -(((0.1)*(0.82/2)^^3)/(2*(((dest_cell.pos[0].x +0.)^^2+(dest_cell.pos[0].y +0.0)^^2)^^0.5)^^5)) * (2*(dest_cell.pos[0].x +0.)^^2 - (dest_cell.pos[0].y +0.0)^^2);
+                        dest_cell.fs.B.y = -(((0.1)*(0.82/2)^^3)/(2*(((dest_cell.pos[0].x +0.)^^2+(dest_cell.pos[0].y +0.0)^^2)^^0.5)^^5)) * (3*(dest_cell.pos[0].x +0.)*(dest_cell.pos[0].y +0.0));
+                    }
 
                     // Temporary BCs for Hartmann Flow Problem:
                     //if(dest_cell.pos[0].y > 0.5){ f.fs.vel.x = 1.0; dest_cell.fs.vel.x = 1.0; f.fs.B.x = 0.0; dest_cell.fs.B.x = 0.0;}
